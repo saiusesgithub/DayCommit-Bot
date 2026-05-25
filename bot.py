@@ -162,9 +162,8 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"No logs for today ({today_str}) yet.")
         return
 
-    await update.message.reply_text(
-        f"Today's logs — {today_str}\n\n{devlog.format_entries(entries)}"
-    )
+    raw_journal = devlog.build_raw_journal_markdown(today_str, entries)
+    await send_markdown_file(update, f"raw_journal_{today_str}.md", raw_journal)
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -212,9 +211,8 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"No logs found for {date_arg}.")
         return
 
-    await update.message.reply_text(
-        f"Logs — {date_arg}\n\n{devlog.format_entries(entries)}"
-    )
+    raw_journal = devlog.build_raw_journal_markdown(date_arg, entries)
+    await send_markdown_file(update, f"raw_journal_{date_arg}.md", raw_journal)
 
 
 async def cmd_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -226,9 +224,8 @@ async def cmd_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"No logs for yesterday ({yesterday_str}).")
         return
 
-    await update.message.reply_text(
-        f"Yesterday's logs — {yesterday_str}\n\n{devlog.format_entries(entries)}"
-    )
+    raw_journal = devlog.build_raw_journal_markdown(yesterday_str, entries)
+    await send_markdown_file(update, f"raw_journal_{yesterday_str}.md", raw_journal)
 
 
 async def cmd_delete_last(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

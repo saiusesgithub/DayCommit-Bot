@@ -221,11 +221,11 @@ record commit SHA in github_pushes after successful API response
 |----------------|------------------|--------------------------------------------------------------------|
 | `/start`       | `cmd_start`      | Welcome message                                                    |
 | `/help`        | `cmd_help`       | Show all commands                                                  |
-| `/today`       | `cmd_today`      | Numbered list of today's entries (no timestamps)                   |
+| `/today`       | `cmd_today`      | Send today's raw logs as `raw_journal_YYYY-MM-DD.md`               |
 | `/status`      | `cmd_status`     | Show logs, summary, push state, last push, and streak for today    |
-| `/history`     | `cmd_history`    | View logs for a given `YYYY-MM-DD` date                            |
+| `/history`     | `cmd_history`    | Send raw logs for a given date as `raw_journal_YYYY-MM-DD.md`      |
 | `/week`        | `cmd_week`       | Generate a send-only weekly AI review for the last 7 local dates   |
-| `/yesterday`   | `cmd_yesterday`  | Numbered list of yesterday's entries                               |
+| `/yesterday`   | `cmd_yesterday`  | Send yesterday's raw logs as `raw_journal_YYYY-MM-DD.md`           |
 | `/summary`     | `cmd_summary`    | Generate AI summary of today's logs; stores in DB; sends to user  |
 | `/regenerate`  | `cmd_regenerate` | Regenerate and overwrite today's AI summary                        |
 | `/edit_summary`| `cmd_edit_summary`| Start manual edit flow for today's saved summary                  |
@@ -282,6 +282,8 @@ continuation line
 ```
 
 Long `/summary`, `/regenerate`, and `/edit_summary` summary text is sent as `summary_YYYY-MM-DD.md` when it exceeds 3500 characters. Raw diary output is sent as plain text, never parsed as Telegram Markdown.
+
+`/today`, `/yesterday`, and `/history` send raw journal exports as `.md` documents to avoid Telegram message length limits. These exports use `# Raw Journal — YYYY-MM-DD` and append stored `message_text` values directly in original order.
 
 ---
 
@@ -386,3 +388,4 @@ python main.py
 | 2026-05-25 | No weekly review or persistent undo for journal edits | Added `/week` and `/undo` backed by `undo_actions` |
 | 2026-05-25 | Large previews and summaries could hit Telegram message length limits | `/preview` now sends a `.md` file; long summaries/edit summaries are sent as files |
 | 2026-05-25 | Final raw journal section used a formatter that trimmed and indented user messages | Added raw-log final formatter so final DevLogs append exact stored messages under `# Rough Journal (Raw Logs)` |
+| 2026-05-25 | Long `/today` responses could exceed Telegram message limits | `/today`, `/yesterday`, and `/history` now send raw journal `.md` files |

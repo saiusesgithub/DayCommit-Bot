@@ -18,6 +18,12 @@ def format_raw_entries(entries: list) -> str:
     return "\n\n".join(parts)
 
 
+def build_raw_journal_markdown(date_str: str, entries: list) -> str:
+    """Build a raw journal export preserving stored Telegram messages exactly."""
+    raw_logs = "\n\n".join(entry["message_text"] for entry in entries)
+    return f"# Raw Journal — {date_str}\n\n{raw_logs}"
+
+
 def build_markdown(date_str: str, summary: str | None, entries: list) -> str:
     """Assemble the full Daily DevLog Markdown document."""
     ai_block = summary if summary else "_No summary yet. Run /summary first._"

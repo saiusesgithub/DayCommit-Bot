@@ -55,11 +55,11 @@ Final DevLog files keep AI output and raw logs separate. AI generates only the s
 
 ## Commands
 
-- `/today` - Show today's logs
+- `/today` - Send today's raw logs as `raw_journal_YYYY-MM-DD.md`
 - `/status` - Show today's log count, summary state, GitHub push state, last push, and writing streak
-- `/history YYYY-MM-DD` - Show logs for a specific date
+- `/history YYYY-MM-DD` - Send raw logs for a specific date as `raw_journal_YYYY-MM-DD.md`
 - `/week` - Generate a weekly AI review for the last 7 local dates
-- `/yesterday` - Show yesterday's logs
+- `/yesterday` - Send yesterday's raw logs as `raw_journal_YYYY-MM-DD.md`
 - `/summary` - Generate and save today's AI summary
 - `/regenerate` - Regenerate and overwrite today's AI summary
 - `/edit_summary` - Send today's saved summary back for manual editing
