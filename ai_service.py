@@ -169,6 +169,10 @@ async def _gemini_summary(prompt: str) -> str:
 
 async def generate_summary(entries_text: str) -> str:
     prompt = _build_prompt(entries_text)
+    return await generate_from_prompt(prompt)
+
+
+async def generate_from_prompt(prompt: str) -> str:
     providers: tuple[tuple[str, ProviderFn], ...] = (
         ("OpenRouter", _openrouter_summary),
         ("Groq", _groq_summary),

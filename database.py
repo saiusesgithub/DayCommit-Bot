@@ -46,6 +46,22 @@ def init_db() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_push_date "
             "ON github_pushes (telegram_user_id, entry_date)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS undo_actions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER NOT NULL,
+                action_type      TEXT    NOT NULL,
+                entry_id         INTEGER,
+                message_text     TEXT,
+                entry_date       TEXT,
+                created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+                is_used          INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_undo_latest "
+            "ON undo_actions (telegram_user_id, is_used, created_at)"
+        )
         conn.commit()
 
 

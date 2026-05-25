@@ -26,6 +26,7 @@ HELP_TEXT = """
 /today — View today's logs
 /status — View today's DevLog status
 /history — View logs for a date
+/week — Generate weekly review
 /summary — Generate AI summary
 /regenerate — Regenerate AI summary
 /edit_summary — Edit saved summary
@@ -33,6 +34,7 @@ HELP_TEXT = """
 /push — Push to GitHub
 /backup — Create database backup
 /delete_last — Delete latest log
+/undo — Undo latest log add/delete
 /yesterday — View yesterday's logs
 /cancel — Cancel current action
 /help — Show this menu
@@ -47,6 +49,7 @@ BOT_COMMANDS = [
     BotCommand("yesterday", "Show yesterday's logs"),
     BotCommand("status", "Show today's DevLog status"),
     BotCommand("history", "Show logs for a date"),
+    BotCommand("week", "Generate weekly review"),
     BotCommand("summary", "Generate AI summary"),
     BotCommand("regenerate", "Regenerate AI summary"),
     BotCommand("edit_summary", "Edit saved summary"),
@@ -54,6 +57,7 @@ BOT_COMMANDS = [
     BotCommand("push", "Push today's DevLog to GitHub"),
     BotCommand("backup", "Create database backup"),
     BotCommand("delete_last", "Delete latest log entry"),
+    BotCommand("undo", "Undo latest log add/delete"),
     BotCommand("cancel", "Cancel current action"),
 ]
 
@@ -225,6 +229,16 @@ async def cmd_delete_last(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Failed to delete the last entry. Please try again.")
 
 
+async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    try:
+        reply = journal_service.undo_last_action(user_id)
+        await update.message.reply_text(reply if reply else "Nothing to undo.")
+    except Exception:
+        logger.exception("Failed to undo last action for user %s", user_id)
+        await update.message.reply_text("Failed to undo last action. Please try again.")
+
+
 async def _generate_today_summary(user_id: int) -> str:
     entries = journal_service.get_today_entries(user_id)
     entries_text = "\n".join(
@@ -233,6 +247,95 @@ async def _generate_today_summary(user_id: int) -> str:
     summary = await ai_service.generate_summary(entries_text)
     summary_service.save_summary(user_id, summary)
     return summary
+
+
+def _weekly_review_prompt(grouped_entries: dict[str, list]) -> str:
+    sections = []
+    for date_str, entries in grouped_entries.items():
+        sections.append(f"## {date_str}\n{devlog.format_entries(entries)}")
+    diary_text = "\n\n".join(sections)
+
+    return f"""\
+You are DayCommit, an AI assistant creating a concise weekly developer review.
+
+Review these journal entries from the last 7 local dates including today.
+
+Weekly diary:
+{diary_text}
+
+Return only Markdown with these sections:
+
+## What I Worked On
+Summarize the main work areas.
+
+## Strong Days
+Identify the strongest days and why.
+
+## Weak Days
+Identify weaker days and why.
+
+## Main Distractions
+List recurring distractions or wasted time.
+
+## Main Wins
+List the biggest wins.
+
+## Next Week Focus
+List practical focus areas for next week.
+
+## Suggested Improvements
+Give specific, actionable improvements.
+"""
+
+
+async def _send_long_message(update: Update, text: str, limit: int = 3900) -> None:
+    if len(text) <= limit:
+        await update.message.reply_text(text)
+        return
+
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            await update.message.reply_text(remaining)
+            return
+
+        split_at = remaining.rfind("\n\n", 0, limit)
+        if split_at <= 0:
+            split_at = remaining.rfind("\n", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+
+        await update.message.reply_text(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+
+
+async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    today = datetime.now(LOCAL_TZ).date()
+    grouped_entries = {}
+
+    for offset in range(6, -1, -1):
+        date_str = (today - timedelta(days=offset)).isoformat()
+        entries = journal_service.get_entries_for_date(user_id, date_str)
+        if entries:
+            grouped_entries[date_str] = entries
+
+    if not grouped_entries:
+        await update.message.reply_text("No logs found for the last 7 days.")
+        return
+
+    await update.message.reply_text("Generating weekly review...")
+
+    try:
+        review = await ai_service.generate_from_prompt(_weekly_review_prompt(grouped_entries))
+        await _send_long_message(update, review)
+    except RuntimeError as e:
+        await update.message.reply_text(str(e))
+    except Exception:
+        logger.exception("Failed to generate weekly review for user %s", user_id)
+        await update.message.reply_text(
+            "Failed to generate weekly review. Check your API keys and try again."
+        )
 
 
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -394,6 +497,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("yesterday", cmd_yesterday))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("summary", cmd_summary))
     app.add_handler(CommandHandler("regenerate", cmd_regenerate))
     app.add_handler(CommandHandler("edit_summary", cmd_edit_summary))
@@ -401,6 +505,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("push", cmd_push))
     app.add_handler(CommandHandler("backup", cmd_backup))
     app.add_handler(CommandHandler("delete_last", cmd_delete_last))
+    app.add_handler(CommandHandler("undo", cmd_undo))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

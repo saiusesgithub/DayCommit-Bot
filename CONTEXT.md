@@ -101,6 +101,18 @@ CREATE TABLE github_pushes (
     pushed_at        TEXT    NOT NULL    -- UTC "YYYY-MM-DD HH:MM:SS"
 );
 CREATE UNIQUE INDEX idx_user_push_date ON github_pushes (telegram_user_id, entry_date);
+
+CREATE TABLE undo_actions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_user_id INTEGER NOT NULL,
+    action_type      TEXT    NOT NULL,
+    entry_id         INTEGER,
+    message_text     TEXT,
+    entry_date       TEXT,
+    created_at       TEXT    NOT NULL,
+    is_used          INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_user_undo_latest ON undo_actions (telegram_user_id, is_used, created_at);
 ```
 
 **Notes:**
@@ -108,6 +120,7 @@ CREATE UNIQUE INDEX idx_user_push_date ON github_pushes (telegram_user_id, entry
 - `entry_date` / `summary_date` use the user's local date (configured `TIMEZONE`). This matters around midnight.
 - `daily_summaries` has a UNIQUE index — calling `/summary` again on the same day upserts (overwrites) via `ON CONFLICT DO UPDATE`.
 - `github_pushes` has a UNIQUE index by user/date — pushing the same day again updates the recorded path, commit SHA, and timestamp.
+- `undo_actions` records the latest journal add/delete operations so `/undo` survives process restarts. It does not affect summaries or GitHub pushes.
 - Multi-user safe: every query filters by `telegram_user_id`.
 
 ---
@@ -211,6 +224,7 @@ record commit SHA in github_pushes after successful API response
 | `/today`       | `cmd_today`      | Numbered list of today's entries (no timestamps)                   |
 | `/status`      | `cmd_status`     | Show logs, summary, push state, last push, and streak for today    |
 | `/history`     | `cmd_history`    | View logs for a given `YYYY-MM-DD` date                            |
+| `/week`        | `cmd_week`       | Generate a send-only weekly AI review for the last 7 local dates   |
 | `/yesterday`   | `cmd_yesterday`  | Numbered list of yesterday's entries                               |
 | `/summary`     | `cmd_summary`    | Generate AI summary of today's logs; stores in DB; sends to user  |
 | `/regenerate`  | `cmd_regenerate` | Regenerate and overwrite today's AI summary                        |
@@ -219,6 +233,7 @@ record commit SHA in github_pushes after successful API response
 | `/push`        | `cmd_push`       | Push today's saved-summary DevLog to GitHub                        |
 | `/backup`      | `cmd_backup`     | Create a manual SQLite backup                                      |
 | `/delete_last` | `cmd_delete_last`| Delete most recent entry; echoes the deleted text                  |
+| `/undo`        | `cmd_undo`       | Undo latest journal add/delete action                              |
 | `/cancel`      | `cmd_cancel`     | Cancel summary editing mode                                       |
 | *(any text)*   | `handle_message` | Save as journal entry; reply "Logged."                             |
 
@@ -229,6 +244,10 @@ Manual summary editing uses in-memory per-user state in `bot.py`. While a user i
 Daily reminders use python-telegram-bot `JobQueue`. At 23:00 in the configured `TIMEZONE`, the bot sends `Want to finish today's DevLog? /summary /preview /push` only to users who have at least one journal entry for the current local date.
 
 Manual backups use SQLite's `.backup()` API and write files named `daycommit_YYYY-MM-DD_HH-MM-SS.db` into `BACKUP_DIR`, which defaults to `daycommit-backups`.
+
+Weekly reviews use the existing AI provider fallback system directly with a weekly prompt. Reviews are send-only for now and are not stored in SQLite.
+
+Undo is intentionally scoped to journal add/delete actions only. It does not roll back summaries, GitHub pushes, backups, or AI generations.
 
 ### /preview output format
 
@@ -330,7 +349,7 @@ python main.py
 
 - [x] GitHub integration — push daily DevLog as a markdown file commit
 - [x] `/history` — view logs for an arbitrary past date
-- [ ] `/week` — AI summary of the past 7 days
+- [x] `/week` — AI summary of the past 7 days
 - [ ] `/export` — download today's DevLog as a `.md` file
 - [ ] `/search` — full-text search across all entries
 - [ ] Webhook mode for production deployment
@@ -356,3 +375,4 @@ python main.py
 | 2026-05-25 | Telegram slash-command menu was not populated | Added startup `set_my_commands()` registration and cleaner `/help` text |
 | 2026-05-25 | Saved AI summaries could not be manually edited or regenerated explicitly | Added `/edit_summary`, `/regenerate`, and `/cancel` with in-memory edit state |
 | 2026-05-25 | No quick state check, historical date view, manual backup, or close-of-day reminder | Added `/status`, `/history`, `/backup`, and a 23:00 local JobQueue reminder |
+| 2026-05-25 | No weekly review or persistent undo for journal edits | Added `/week` and `/undo` backed by `undo_actions` |
