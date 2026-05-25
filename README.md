@@ -48,6 +48,8 @@ Do not commit `.env`, `.db`, `.sqlite`, or `.sqlite3` files. They are ignored by
 
 AI summaries use provider fallback in this order: OpenRouter, then Groq, then Gemini. Set at least one provider API key for `/summary`.
 
+The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. Keep the `{{DIARY_TEXT}}` placeholder in that file; DayCommit replaces it with the combined journal entries at runtime. If the template file is missing, the bot falls back to a built-in safe summary prompt.
+
 ## Commands
 
 - `/today` - Show today's logs

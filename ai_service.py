@@ -1,6 +1,7 @@
 import logging
 import warnings
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import httpx
 
@@ -26,13 +27,15 @@ _gemini_model = None
 _groq_client = None
 
 ProviderFn = Callable[[str], Awaitable[str]]
+_TEMPLATE_PATH = Path(__file__).resolve().parent / "prompts" / "daily_summary_template.md"
+_DIARY_PLACEHOLDER = "{{DIARY_TEXT}}"
 
-_PROMPT = """\
+_DEFAULT_PROMPT_TEMPLATE = """\
 You are a personal developer journal assistant.
 Analyze these raw journal entries from today and produce a concise structured summary.
 
 Raw entries:
-{entries}
+{{DIARY_TEXT}}
 
 Respond with exactly this Markdown (no extra text before or after):
 
@@ -80,6 +83,25 @@ def _require(value: str, name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} not set")
     return value
+
+
+def _load_prompt_template() -> str:
+    try:
+        template = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("Prompt template missing; using built-in default")
+        return _DEFAULT_PROMPT_TEMPLATE
+
+    if _DIARY_PLACEHOLDER not in template:
+        logger.warning("Prompt template missing diary placeholder; using built-in default")
+        return _DEFAULT_PROMPT_TEMPLATE
+
+    return template
+
+
+def _build_prompt(entries_text: str) -> str:
+    template = _load_prompt_template()
+    return template.replace(_DIARY_PLACEHOLDER, entries_text)
 
 
 async def _openrouter_summary(prompt: str) -> str:
@@ -146,7 +168,7 @@ async def _gemini_summary(prompt: str) -> str:
 
 
 async def generate_summary(entries_text: str) -> str:
-    prompt = _PROMPT.format(entries=entries_text)
+    prompt = _build_prompt(entries_text)
     providers: tuple[tuple[str, ProviderFn], ...] = (
         ("OpenRouter", _openrouter_summary),
         ("Groq", _groq_summary),

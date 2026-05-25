@@ -54,6 +54,8 @@ DayCommit-Bot/
 ├── devlog.py          — shared Daily DevLog formatting + markdown builder
 ├── github_service.py  — GitHub REST API push/update logic + push audit storage
 ├── ai_service.py      — OpenRouter, Groq, Gemini provider fallback logic
+├── prompts/
+│   └── daily_summary_template.md — editable /summary prompt template
 ├── database.py        — SQLite init, table schemas, connection context manager
 ├── config.py          — loads .env; exposes all config constants
 ├── timezone_utils.py  — LOCAL_TZ (ZoneInfo) + utc_to_local() helper
@@ -154,6 +156,9 @@ bot sends summary text to user
 
 - Both AI clients are lazy-initialized (only created on first `/summary` call).
 - Model names are configurable via `.env` so provider deprecations do not require code edits.
+- Summary style is configurable by editing `prompts/daily_summary_template.md`.
+- The template must contain `{{DIARY_TEXT}}`; `ai_service.py` replaces it with combined journal entries at runtime.
+- If the template file is missing or does not contain the placeholder, `ai_service.py` falls back to a built-in safe prompt.
 - If a provider fails, the next provider takes over silently — user just gets their summary.
 - Provider failure logs include only provider name and a sanitized error string, never API keys or full request URLs.
 - If all providers fail, the exception bubbles up and the bot replies with a clear error message.
@@ -329,3 +334,4 @@ python main.py
 | 2026-05-25 | `google-generativeai` deprecated; `google-genai` failed to install on Windows | Using `google-generativeai` 0.8.6 with FutureWarning suppressed; Groq added as fallback |
 | 2026-05-25 | `/summary` failed because `gemini-1.5-flash` was unavailable and old Groq SDK crashed with `httpx 0.28` | Added configurable model names, defaulted to current Gemini/Groq models, and upgraded `groq` to 1.2.0 |
 | 2026-05-25 | AI fallback was hardcoded around Gemini first, then Groq | Refactored `ai_service.py` into OpenRouter → Groq → Gemini provider fallback with sanitized provider logs |
+| 2026-05-25 | `/summary` prompt was hardcoded in `ai_service.py` | Moved editable prompt style to `prompts/daily_summary_template.md` with `{{DIARY_TEXT}}` runtime replacement |
