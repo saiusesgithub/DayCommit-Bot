@@ -9,17 +9,18 @@
 
 A personal Telegram bot that acts as a developer journal. The user sends plain
 text messages throughout the day; the bot stores them as timestamped log entries
-grouped by date. Think of it as a frictionless "git commit message for your day".
+grouped by date. At end of day, `/summary` calls an AI model to generate a
+structured Markdown summary. `/preview` assembles the full Daily DevLog document.
 
 ---
 
-## Current Status: MVP (v0.3)
+## Current Status: MVP (v0.4)
 
-The bot is fully functional and runnable locally. Timezone-aware display is
-implemented (default: Asia/Kolkata). /today and /yesterday show clean numbered
-logs with no timestamps (multiline messages are indented). /delete_last shows
-the deleted entry text. No AI, no GitHub integration yet — that is intentional
-for this phase.
+- Journal logging, viewing, and deleting: done
+- Timezone-aware dates and display: done
+- AI summary (`/summary`) with Gemini primary + Groq fallback: done
+- Full DevLog preview (`/preview`): done
+- GitHub push, export, search: not yet implemented
 
 ---
 
@@ -32,6 +33,8 @@ for this phase.
 | Database      | SQLite (stdlib `sqlite3`)             | —        |
 | Config        | python-dotenv                         | 1.0.1    |
 | Timezones     | `zoneinfo` (stdlib) + `tzdata`        | 2025.2   |
+| AI (primary)  | Google Gemini via `google-generativeai` | 0.8.6  |
+| AI (fallback) | Groq (llama3-70b-8192) via `groq`    | 0.9.0    |
 | Runtime       | Local polling (no webhook)            | —        |
 
 ---
@@ -42,9 +45,11 @@ for this phase.
 DayCommit-Bot/
 ├── main.py            — entry point; calls init_db() then app.run_polling()
 ├── bot.py             — all async Telegram handlers + build_application()
-├── journal_service.py — business logic: add / get / delete entries
-├── database.py        — SQLite init, schema creation, connection context manager
-├── config.py          — loads .env; exposes TOKEN, DB_PATH, TIMEZONE
+├── journal_service.py — business logic: add / get / delete journal entries
+├── summary_service.py — business logic: save / get AI summaries
+├── ai_service.py      — Gemini + Groq AI calls; fallback logic
+├── database.py        — SQLite init, both table schemas, connection context manager
+├── config.py          — loads .env; exposes all config constants
 ├── timezone_utils.py  — LOCAL_TZ (ZoneInfo) + utc_to_local() helper
 ├── requirements.txt   — pinned dependencies
 ├── .env               — secrets (gitignored); copy from .env.example
@@ -60,20 +65,27 @@ DayCommit-Bot/
 ```sql
 CREATE TABLE journal_entries (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    telegram_user_id INTEGER NOT NULL,       -- Telegram user ID (int64)
-    message_text     TEXT    NOT NULL,       -- raw message the user sent
-    entry_date       TEXT    NOT NULL,       -- YYYY-MM-DD in LOCAL timezone
-    created_at       TEXT    NOT NULL        -- UTC datetime "YYYY-MM-DD HH:MM:SS"
+    telegram_user_id INTEGER NOT NULL,
+    message_text     TEXT    NOT NULL,
+    entry_date       TEXT    NOT NULL,   -- YYYY-MM-DD in LOCAL timezone
+    created_at       TEXT    NOT NULL    -- UTC "YYYY-MM-DD HH:MM:SS"
 );
-
 CREATE INDEX idx_user_date ON journal_entries (telegram_user_id, entry_date);
+
+CREATE TABLE daily_summaries (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_user_id INTEGER NOT NULL,
+    summary_date     TEXT    NOT NULL,   -- YYYY-MM-DD in LOCAL timezone
+    summary_text     TEXT    NOT NULL,   -- full Markdown from AI
+    created_at       TEXT    NOT NULL    -- UTC "YYYY-MM-DD HH:MM:SS"
+);
+CREATE UNIQUE INDEX idx_user_summary_date ON daily_summaries (telegram_user_id, summary_date);
 ```
 
 **Notes:**
-- `created_at` is always UTC (set by SQLite `datetime('now')`). Never touched after insert.
-- `entry_date` is the user's local date (in configured `TIMEZONE`) at time of insert.
-  This matters around midnight: a message sent at 23:55 IST vs 00:05 IST goes to different days.
-- All times displayed to the user are converted to local timezone via `utc_to_local()`.
+- `created_at` is always UTC via SQLite `datetime('now')`. Never touched after insert.
+- `entry_date` / `summary_date` use the user's local date (configured `TIMEZONE`). This matters around midnight.
+- `daily_summaries` has a UNIQUE index — calling `/summary` again on the same day upserts (overwrites) via `ON CONFLICT DO UPDATE`.
 - Multi-user safe: every query filters by `telegram_user_id`.
 
 ---
@@ -85,72 +97,112 @@ User sends message
        │
        ▼
 journal_service.add_entry()
-  entry_date  = _local_date()          ← datetime.now(LOCAL_TZ).date()  [local]
-  created_at  = datetime('now')        ← SQLite UTC                      [UTC]
-       │
-       ▼
-       DB stores: entry_date=local, created_at=UTC
+  entry_date  = _local_date()     ← datetime.now(LOCAL_TZ).date()  [local]
+  created_at  = datetime('now')   ← SQLite UTC                      [UTC]
        │
        ▼
 bot.cmd_today / cmd_yesterday
-  utc_to_local(entry["created_at"])    ← converts UTC → LOCAL_TZ
-  .strftime("%H:%M")                   ← displayed to user in local time
+  timestamps no longer displayed  ← clean numbered list only
 ```
 
-**Rule:** store UTC, display local. Never store local, never display UTC.
+**Rule:** store UTC, display local. `entry_date` is always the user's local date.
 
-### timezone_utils.py
+**Why `tzdata`?** Windows has no IANA timezone database. `zoneinfo` reads from it.
+Without `tzdata`, `ZoneInfo("Asia/Kolkata")` raises `ZoneInfoNotFoundError` on Windows.
 
-```python
-LOCAL_TZ = ZoneInfo(TIMEZONE)          # loaded once at import time
+---
 
-def utc_to_local(utc_str: str) -> datetime:
-    dt_utc = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
-    return dt_utc.astimezone(LOCAL_TZ)
+## AI Summary Architecture
+
+```
+/summary command
+       │
+       ▼
+ai_service.generate_summary(entries_text)
+       │
+       ├── try: _gemini_summary()   ← gemini-1.5-flash (google-generativeai)
+       │         if any exception ↓
+       └── fallback: _groq_summary() ← llama3-70b-8192 (groq)
+       │
+       ▼
+summary_service.save_summary()    ← upsert into daily_summaries
+       │
+       ▼
+bot sends summary text to user
 ```
 
-**Why `tzdata` package?** Windows does not ship the IANA timezone database.
-Python's `zoneinfo` stdlib reads from it. Without `tzdata`, any `ZoneInfo("Asia/Kolkata")`
-call raises `ZoneInfoNotFoundError` on Windows.
+- Both AI clients are lazy-initialized (only created on first `/summary` call).
+- If Gemini fails for any reason, Groq takes over silently — user just gets their summary.
+- If both fail, the exception bubbles up and the bot replies with a clear error message.
+- `google-generativeai` shows a FutureWarning about deprecation; it is suppressed via `warnings.catch_warnings()`. Migrate to `google-genai` SDK when ready.
 
 ---
 
 ## Bot Commands
 
-| Command        | Handler function  | Behaviour                                                    |
-|----------------|-------------------|--------------------------------------------------------------|
-| `/start`       | `cmd_start`       | Welcome message                                              |
-| `/help`        | `cmd_help`        | Show command list                                            |
-| `/today`       | `cmd_today`       | Numbered plain-text list of today's entries (no timestamps)  |
-| `/yesterday`   | `cmd_yesterday`   | Numbered plain-text list of yesterday's entries              |
-| `/delete_last` | `cmd_delete_last` | Delete most recent entry; replies with its full text         |
-| *(any text)*   | `handle_message`  | Save as a new journal entry; reply "Logged."                 |
+| Command        | Handler          | Behaviour                                                          |
+|----------------|------------------|--------------------------------------------------------------------|
+| `/start`       | `cmd_start`      | Welcome message                                                    |
+| `/help`        | `cmd_help`       | Show all commands                                                  |
+| `/today`       | `cmd_today`      | Numbered list of today's entries (no timestamps)                   |
+| `/yesterday`   | `cmd_yesterday`  | Numbered list of yesterday's entries                               |
+| `/summary`     | `cmd_summary`    | Generate AI summary of today's logs; stores in DB; sends to user  |
+| `/preview`     | `cmd_preview`    | Full Daily DevLog markdown: AI summary + raw diary                 |
+| `/delete_last` | `cmd_delete_last`| Delete most recent entry; echoes the deleted text                  |
+| *(any text)*   | `handle_message` | Save as journal entry; reply "Logged."                             |
 
-**Error handling rule:** if a DB write fails, log the exception server-side and
-reply with a human-readable error message. Never silently swallow errors.
+### /preview output format
+
+```
+# Daily DevLog — YYYY-MM-DD
+
+## AI Summary
+
+**One-line summary:** ...
+
+### Detailed Summary
+...
+
+### Timeline / Time Allocation / Wins / Wasted Time / Improvements / Tags
+...
+
+---
+
+## Rough Diary
+
+1. first log
+2. second log
+3. multiline log title
+   continuation line
+```
+
+If the full preview exceeds 4000 characters, it is split into two messages (AI summary first, diary second).
 
 ---
 
 ## Key Design Decisions
 
-1. **Polling, not webhook.** Simpler for local dev and MVP. Switch to webhook when deploying.
-2. **No ORM.** Raw `sqlite3` with a `contextmanager`. Keeps the DB layer transparent and dependency-free.
-3. **Separation of concerns.** `journal_service.py` has zero Telegram imports; `bot.py` has zero SQL.
-4. **`delete_last` is global** (not scoped to today). It deletes the most recent entry regardless of date.
-5. **Markdown v1** used for bot replies (not MarkdownV2) to avoid excess escaping.
-6. **`TIMEZONE` is the single source of truth** for all date/time logic. Change it in `.env` to relocate the bot.
-7. **`LOCAL_TZ` is imported, not reconstructed.** `timezone_utils.LOCAL_TZ` is built once at startup.
-   `journal_service` and `bot` both import it from there — never call `ZoneInfo()` twice.
+1. **Polling, not webhook.** Simpler for local dev. Switch to webhook for production.
+2. **No ORM.** Raw `sqlite3` with a `contextmanager`. Transparent and dependency-free.
+3. **Separation of concerns.** `journal_service` and `summary_service` have zero Telegram imports. `bot.py` has zero SQL.
+4. **`delete_last` is global** (not scoped to today). Deletes the single most recent entry regardless of date.
+5. **No `parse_mode` on diary output.** User text may contain `*`, `_`, `` ` `` which break Markdown parsing. Only `/help` and `/start` use `parse_mode="Markdown"`.
+6. **`TIMEZONE` is the single source of truth.** Change it in `.env` to relocate the bot. `LOCAL_TZ` is built once in `timezone_utils.py` and imported everywhere.
+7. **AI fallback is silent.** The user never sees "Gemini failed, using Groq" — they just get a summary. Failures are logged server-side only.
 
 ---
 
 ## Environment Variables
 
-| Variable             | Required | Default         | Description                              |
-|----------------------|----------|-----------------|------------------------------------------|
-| `TELEGRAM_BOT_TOKEN` | Yes      | —               | From @BotFather                          |
-| `DB_PATH`            | No       | `daycommit.db`  | Path to SQLite DB file                   |
-| `TIMEZONE`           | No       | `Asia/Kolkata`  | IANA timezone name for display and dates |
+| Variable             | Required | Default         | Description                                    |
+|----------------------|----------|-----------------|------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN` | Yes      | —               | From @BotFather                                |
+| `GEMINI_API_KEY`     | Yes*     | —               | Google AI Studio — primary AI model            |
+| `GROQ_API_KEY`       | Yes*     | —               | Groq Cloud — fallback AI if Gemini unavailable |
+| `DB_PATH`            | No       | `daycommit.db`  | Path to SQLite DB file                         |
+| `TIMEZONE`           | No       | `Asia/Kolkata`  | IANA timezone name for display and dates       |
+
+\* At least one of `GEMINI_API_KEY` or `GROQ_API_KEY` must be set to use `/summary`.
 
 ---
 
@@ -162,7 +214,7 @@ pip install -r requirements.txt
 
 # 2. Set up .env
 copy .env.example .env
-# Edit .env — paste your bot token; optionally set TIMEZONE
+# Edit .env — fill in bot token + API keys
 
 # 3. Start
 python main.py
@@ -172,24 +224,25 @@ python main.py
 
 ## What Is NOT Implemented Yet (Roadmap)
 
-- [ ] AI summarisation of daily logs (Claude API)
-- [ ] GitHub integration (auto-commit logs to a repo)
-- [ ] `/history` — browse logs by arbitrary date
-- [ ] `/week` — summary of the last 7 days
-- [ ] Webhook mode for production deployment
-- [ ] `/export` — export logs as markdown or JSON
+- [ ] GitHub integration — push daily DevLog as a markdown file commit
+- [ ] `/history` — view logs for an arbitrary past date
+- [ ] `/week` — AI summary of the past 7 days
+- [ ] `/export` — download today's DevLog as a `.md` file
 - [ ] `/search` — full-text search across all entries
+- [ ] Webhook mode for production deployment
 - [ ] Docker / deployment config
 - [ ] Per-user timezone setting (currently one global default)
+- [ ] Migrate `google-generativeai` → `google-genai` SDK (deprecated warning)
 
 ---
 
 ## Known Issues / Past Bugs Fixed
 
-| Date       | Issue                                                                  | Fix                                       |
-|------------|------------------------------------------------------------------------|-------------------------------------------|
-| 2026-05-25 | `python-telegram-bot==21.3` crashes on Python 3.13 (`__slots__` bug)  | Upgraded to 22.7                          |
-| 2026-05-25 | `SyntaxWarning` from `\_` escape in HELP_TEXT string                   | Removed backslash (Markdown v1, not v2)   |
-| 2026-05-25 | All timestamps displayed in UTC; `entry_date` used machine local date  | Added `timezone_utils.py`; all date/time logic now timezone-aware |
-| 2026-05-25 | `/today`/`/yesterday` showed `[HH:MM]` clutter; multiline messages had no indent | `_format_entries()` helper: numbered, no timestamps, continuation lines indented |
-| 2026-05-25 | `/delete_last` replied generic "deleted" with no content shown | Now returns `message_text` from service and echoes it in the reply |
+| Date       | Issue                                                                         | Fix                                                                 |
+|------------|-------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| 2026-05-25 | `python-telegram-bot==21.3` crashes on Python 3.13 (`__slots__` bug)         | Upgraded to 22.7                                                    |
+| 2026-05-25 | `SyntaxWarning` from `\_` escape in HELP_TEXT                                 | Removed backslash (Markdown v1, not v2)                             |
+| 2026-05-25 | Timestamps displayed in UTC; `entry_date` used naive machine date             | Added `timezone_utils.py`; all date/time logic is now TZ-aware     |
+| 2026-05-25 | `/today`/`/yesterday` showed `[HH:MM]` clutter; no multiline indent          | `_format_entries()`: numbered, no timestamps, continuation indented |
+| 2026-05-25 | `/delete_last` replied generic "deleted" with no content                      | Returns `message_text` from service and echoes it in reply          |
+| 2026-05-25 | `google-generativeai` deprecated; `google-genai` failed to install on Windows | Using `google-generativeai` 0.8.6 with FutureWarning suppressed; Groq added as fallback |
