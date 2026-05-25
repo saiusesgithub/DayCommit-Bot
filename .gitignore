@@ -1,0 +1,14 @@
+# secrets
+.env
+
+# database
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
