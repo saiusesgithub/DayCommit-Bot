@@ -1,12 +1,18 @@
+import logging
 import warnings
-import warnings
+
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", FutureWarning)
     import google.generativeai as genai
 
-from config import GEMINI_API_KEY
+from groq import AsyncGroq
 
-_model = None
+from config import GEMINI_API_KEY, GROQ_API_KEY
+
+logger = logging.getLogger(__name__)
+
+_gemini_model = None
+_groq_client = None
 
 _PROMPT = """\
 You are a personal developer journal assistant.
@@ -42,21 +48,46 @@ Respond with exactly this Markdown (no extra text before or after):
 """
 
 
-def _get_model() -> genai.GenerativeModel:
-    global _model
-    if _model is None:
+def _get_gemini():
+    global _gemini_model
+    if _gemini_model is None:
         if not GEMINI_API_KEY:
-            raise RuntimeError("GEMINI_API_KEY is not set in .env")
+            raise RuntimeError("GEMINI_API_KEY not set")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", FutureWarning)
             genai.configure(api_key=GEMINI_API_KEY)
-            _model = genai.GenerativeModel("gemini-1.5-flash")
-    return _model
+            _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    return _gemini_model
+
+
+def _get_groq() -> AsyncGroq:
+    global _groq_client
+    if _groq_client is None:
+        if not GROQ_API_KEY:
+            raise RuntimeError("GROQ_API_KEY not set")
+        _groq_client = AsyncGroq(api_key=GROQ_API_KEY)
+    return _groq_client
+
+
+async def _gemini_summary(prompt: str) -> str:
+    model = _get_gemini()
+    response = await model.generate_content_async(prompt)
+    return response.text.strip()
+
+
+async def _groq_summary(prompt: str) -> str:
+    client = _get_groq()
+    response = await client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content.strip()
 
 
 async def generate_summary(entries_text: str) -> str:
-    model = _get_model()
-    response = await model.generate_content_async(
-        _PROMPT.format(entries=entries_text)
-    )
-    return response.text.strip()
+    prompt = _PROMPT.format(entries=entries_text)
+    try:
+        return await _gemini_summary(prompt)
+    except Exception as e:
+        logger.warning("Gemini failed (%s) — falling back to Groq", e)
+        return await _groq_summary(prompt)
