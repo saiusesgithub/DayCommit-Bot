@@ -11,9 +11,21 @@ from telegram.ext import (
 )
 
 import journal_service
-from timezone_utils import LOCAL_TZ, utc_to_local
+from timezone_utils import LOCAL_TZ
 
 logger = logging.getLogger(__name__)
+
+
+def _format_entries(entries: list) -> str:
+    """Return numbered, multiline-safe plain-text block for a list of journal entries."""
+    parts = []
+    for i, entry in enumerate(entries, 1):
+        prefix = f"{i}. "
+        indent = " " * len(prefix)
+        lines = entry["message_text"].strip().split("\n")
+        body = ("\n" + indent).join(line.rstrip() for line in lines)
+        parts.append(prefix + body)
+    return "\n".join(parts)
 
 HELP_TEXT = """
 *DayCommit* — your personal developer journal
@@ -63,12 +75,9 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"No logs for today ({today_str}) yet.")
         return
 
-    lines = [f"*Today's logs — {today_str}*\n"]
-    for i, entry in enumerate(entries, 1):
-        time_part = utc_to_local(entry["created_at"]).strftime("%H:%M")
-        lines.append(f"{i}. `[{time_part}]` {entry['message_text']}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(
+        f"Today's logs — {today_str}\n\n{_format_entries(entries)}"
+    )
 
 
 async def cmd_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -80,20 +89,17 @@ async def cmd_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"No logs for yesterday ({yesterday_str}).")
         return
 
-    lines = [f"*Yesterday's logs — {yesterday_str}*\n"]
-    for i, entry in enumerate(entries, 1):
-        time_part = utc_to_local(entry["created_at"]).strftime("%H:%M")
-        lines.append(f"{i}. `[{time_part}]` {entry['message_text']}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(
+        f"Yesterday's logs — {yesterday_str}\n\n{_format_entries(entries)}"
+    )
 
 
 async def cmd_delete_last(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     try:
-        deleted = journal_service.delete_last_entry(user_id)
-        if deleted:
-            await update.message.reply_text("Last log entry deleted.")
+        deleted_text = journal_service.delete_last_entry(user_id)
+        if deleted_text is not None:
+            await update.message.reply_text(f"Deleted last log:\n{deleted_text}")
         else:
             await update.message.reply_text("No log entries to delete.")
     except Exception:

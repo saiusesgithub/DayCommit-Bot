@@ -13,11 +13,13 @@ grouped by date. Think of it as a frictionless "git commit message for your day"
 
 ---
 
-## Current Status: MVP (v0.2)
+## Current Status: MVP (v0.3)
 
 The bot is fully functional and runnable locally. Timezone-aware display is
-implemented (default: Asia/Kolkata). No AI, no GitHub integration yet — that is
-intentional for this phase.
+implemented (default: Asia/Kolkata). /today and /yesterday show clean numbered
+logs with no timestamps (multiline messages are indented). /delete_last shows
+the deleted entry text. No AI, no GitHub integration yet — that is intentional
+for this phase.
 
 ---
 
@@ -119,9 +121,9 @@ call raises `ZoneInfoNotFoundError` on Windows.
 |----------------|-------------------|--------------------------------------------------------------|
 | `/start`       | `cmd_start`       | Welcome message                                              |
 | `/help`        | `cmd_help`        | Show command list                                            |
-| `/today`       | `cmd_today`       | List all entries for today (local date), times in local TZ   |
-| `/yesterday`   | `cmd_yesterday`   | List all entries for yesterday (local date), times in local TZ|
-| `/delete_last` | `cmd_delete_last` | Delete the single most recent entry (any date)               |
+| `/today`       | `cmd_today`       | Numbered plain-text list of today's entries (no timestamps)  |
+| `/yesterday`   | `cmd_yesterday`   | Numbered plain-text list of yesterday's entries              |
+| `/delete_last` | `cmd_delete_last` | Delete most recent entry; replies with its full text         |
 | *(any text)*   | `handle_message`  | Save as a new journal entry; reply "Logged."                 |
 
 **Error handling rule:** if a DB write fails, log the exception server-side and
@@ -189,3 +191,5 @@ python main.py
 | 2026-05-25 | `python-telegram-bot==21.3` crashes on Python 3.13 (`__slots__` bug)  | Upgraded to 22.7                          |
 | 2026-05-25 | `SyntaxWarning` from `\_` escape in HELP_TEXT string                   | Removed backslash (Markdown v1, not v2)   |
 | 2026-05-25 | All timestamps displayed in UTC; `entry_date` used machine local date  | Added `timezone_utils.py`; all date/time logic now timezone-aware |
+| 2026-05-25 | `/today`/`/yesterday` showed `[HH:MM]` clutter; multiline messages had no indent | `_format_entries()` helper: numbered, no timestamps, continuation lines indented |
+| 2026-05-25 | `/delete_last` replied generic "deleted" with no content shown | Now returns `message_text` from service and echoes it in the reply |

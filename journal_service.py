@@ -43,17 +43,18 @@ def get_yesterday_entries(user_id: int) -> list:
     return get_entries_for_date(user_id, _local_date(offset_days=-1))
 
 
-def delete_last_entry(user_id: int) -> bool:
+def delete_last_entry(user_id: int) -> str | None:
+    """Delete the most recent entry and return its message_text, or None if none exist."""
     with get_connection() as conn:
         cursor = conn.execute(
-            "SELECT id FROM journal_entries "
+            "SELECT id, message_text FROM journal_entries "
             "WHERE telegram_user_id = ? "
             "ORDER BY created_at DESC LIMIT 1",
             (user_id,),
         )
         row = cursor.fetchone()
         if not row:
-            return False
+            return None
         conn.execute("DELETE FROM journal_entries WHERE id = ?", (row["id"],))
         conn.commit()
-        return True
+        return row["message_text"]
