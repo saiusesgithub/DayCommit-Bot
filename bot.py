@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, time, timedelta
+from io import BytesIO
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -19,6 +20,7 @@ import github_service
 from timezone_utils import LOCAL_TZ
 
 logger = logging.getLogger(__name__)
+TELEGRAM_TEXT_SAFE_LIMIT = 3500
 
 HELP_TEXT = """
 *DayCommit Commands*
@@ -114,6 +116,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+
+
+async def send_markdown_file(update: Update, filename: str, markdown_text: str) -> None:
+    data = BytesIO(markdown_text.encode("utf-8"))
+    data.name = filename
+    await update.message.reply_document(document=data, filename=filename)
+
+
+async def send_summary_result(update: Update, date_str: str, summary: str) -> None:
+    if len(summary) > TELEGRAM_TEXT_SAFE_LIMIT:
+        await send_markdown_file(update, f"summary_{date_str}.md", summary)
+    else:
+        await update.message.reply_text(summary)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -288,27 +303,6 @@ Give specific, actionable improvements.
 """
 
 
-async def _send_long_message(update: Update, text: str, limit: int = 3900) -> None:
-    if len(text) <= limit:
-        await update.message.reply_text(text)
-        return
-
-    remaining = text
-    while remaining:
-        if len(remaining) <= limit:
-            await update.message.reply_text(remaining)
-            return
-
-        split_at = remaining.rfind("\n\n", 0, limit)
-        if split_at <= 0:
-            split_at = remaining.rfind("\n", 0, limit)
-        if split_at <= 0:
-            split_at = limit
-
-        await update.message.reply_text(remaining[:split_at].strip())
-        remaining = remaining[split_at:].strip()
-
-
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     today = datetime.now(LOCAL_TZ).date()
@@ -328,7 +322,10 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         review = await ai_service.generate_from_prompt(_weekly_review_prompt(grouped_entries))
-        await _send_long_message(update, review)
+        if len(review) > TELEGRAM_TEXT_SAFE_LIMIT:
+            await send_markdown_file(update, "weekly_review.md", review)
+        else:
+            await update.message.reply_text(review)
     except RuntimeError as e:
         await update.message.reply_text(str(e))
     except Exception:
@@ -357,7 +354,7 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         summary = await _generate_today_summary(user_id)
-        await update.message.reply_text(summary)
+        await send_summary_result(update, today_str, summary)
     except RuntimeError as e:
         await update.message.reply_text(str(e))
     except Exception:
@@ -380,7 +377,7 @@ async def cmd_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         summary = await _generate_today_summary(user_id)
-        await update.message.reply_text(summary)
+        await send_summary_result(update, today_str, summary)
     except RuntimeError as e:
         await update.message.reply_text(str(e))
     except Exception:
@@ -399,9 +396,16 @@ async def cmd_edit_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     AWAITING_EDITED_SUMMARY.add(user_id)
-    await update.message.reply_text(
-        f"Current summary:\n\n{summary}\n\nSend the edited summary as your next message, or use /cancel."
-    )
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    if len(summary) > TELEGRAM_TEXT_SAFE_LIMIT:
+        await send_markdown_file(update, f"summary_{today_str}.md", summary)
+        await update.message.reply_text(
+            "Send the edited summary as your next message, or use /cancel."
+        )
+    else:
+        await update.message.reply_text(
+            f"Current summary:\n\n{summary}\n\nSend the edited summary as your next message, or use /cancel."
+        )
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -429,22 +433,16 @@ async def cmd_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     summary = summary_service.get_today_summary(user_id)
     entries = journal_service.get_today_entries(user_id)
 
-    if not summary and not entries:
-        await update.message.reply_text("Nothing logged today yet.")
+    if not entries:
+        await update.message.reply_text(f"No logs for today ({today_str}). Nothing to preview.")
+        return
+
+    if not summary:
+        await update.message.reply_text("No AI summary found. Run /summary first.")
         return
 
     preview = devlog.build_markdown(today_str, summary, entries)
-
-    if len(preview) <= 4000:
-        await update.message.reply_text(preview)
-    else:
-        ai_block = summary if summary else "_No summary yet. Run /summary first._"
-        await update.message.reply_text(
-            f"# Daily DevLog — {today_str}\n\n## AI Summary\n\n{ai_block}"
-        )
-        await update.message.reply_text(
-            f"## Rough Diary\n\n{devlog.format_entries(entries)}"
-        )
+    await send_markdown_file(update, f"devlog_{today_str}.md", preview)
 
 
 async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

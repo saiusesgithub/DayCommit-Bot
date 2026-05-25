@@ -229,7 +229,7 @@ record commit SHA in github_pushes after successful API response
 | `/summary`     | `cmd_summary`    | Generate AI summary of today's logs; stores in DB; sends to user  |
 | `/regenerate`  | `cmd_regenerate` | Regenerate and overwrite today's AI summary                        |
 | `/edit_summary`| `cmd_edit_summary`| Start manual edit flow for today's saved summary                  |
-| `/preview`     | `cmd_preview`    | Full Daily DevLog markdown: AI summary + raw diary                 |
+| `/preview`     | `cmd_preview`    | Send full Daily DevLog markdown as `devlog_YYYY-MM-DD.md`          |
 | `/push`        | `cmd_push`       | Push today's saved-summary DevLog to GitHub                        |
 | `/backup`      | `cmd_backup`     | Create a manual SQLite backup                                      |
 | `/delete_last` | `cmd_delete_last`| Delete most recent entry; echoes the deleted text                  |
@@ -251,6 +251,8 @@ Undo is intentionally scoped to journal add/delete actions only. It does not rol
 
 ### /preview output format
 
+`/preview` requires both today's journal entries and a saved AI summary. It builds the final document with `devlog.build_markdown()` and sends it as `devlog_YYYY-MM-DD.md` instead of a large Telegram text message.
+
 ```
 # Daily DevLog — YYYY-MM-DD
 
@@ -266,15 +268,20 @@ Undo is intentionally scoped to journal add/delete actions only. It does not rol
 
 ---
 
-## Rough Diary
+## Rough Journal (Raw Logs)
 
-1. first log
-2. second log
-3. multiline log title
-   continuation line
+1.
+first log
+
+2.
+second log
+
+3.
+multiline log title
+continuation line
 ```
 
-If the full preview exceeds 4000 characters, it is split into two messages (AI summary first, diary second).
+Long `/summary`, `/regenerate`, and `/edit_summary` summary text is sent as `summary_YYYY-MM-DD.md` when it exceeds 3500 characters. Raw diary output is sent as plain text, never parsed as Telegram Markdown.
 
 ---
 
@@ -290,6 +297,7 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 8. **Preview and push share one markdown builder.** `devlog.build_markdown()` is the source of truth for final Daily DevLog output.
 9. **GitHub logic stays outside `bot.py`.** The Telegram handler only validates local prerequisites, builds markdown, calls `github_service`, and formats the reply.
 10. **Summary edit state is in-memory.** If the process restarts during `/edit_summary`, the user must run `/edit_summary` again.
+11. **Raw logs never pass through AI in final DevLogs.** AI generates only the summary. `devlog.build_markdown()` appends raw `journal_entries.message_text` from SQLite directly under `# Rough Journal (Raw Logs)`.
 
 ---
 
@@ -376,3 +384,5 @@ python main.py
 | 2026-05-25 | Saved AI summaries could not be manually edited or regenerated explicitly | Added `/edit_summary`, `/regenerate`, and `/cancel` with in-memory edit state |
 | 2026-05-25 | No quick state check, historical date view, manual backup, or close-of-day reminder | Added `/status`, `/history`, `/backup`, and a 23:00 local JobQueue reminder |
 | 2026-05-25 | No weekly review or persistent undo for journal edits | Added `/week` and `/undo` backed by `undo_actions` |
+| 2026-05-25 | Large previews and summaries could hit Telegram message length limits | `/preview` now sends a `.md` file; long summaries/edit summaries are sent as files |
+| 2026-05-25 | Final raw journal section used a formatter that trimmed and indented user messages | Added raw-log final formatter so final DevLogs append exact stored messages under `# Rough Journal (Raw Logs)` |

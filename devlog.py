@@ -10,13 +10,21 @@ def format_entries(entries: list) -> str:
     return "\n".join(parts)
 
 
+def format_raw_entries(entries: list) -> str:
+    """Numbered raw journal block that preserves each stored message exactly."""
+    parts = []
+    for i, entry in enumerate(entries, 1):
+        parts.append(f"{i}.\n{entry['message_text']}")
+    return "\n\n".join(parts)
+
+
 def build_markdown(date_str: str, summary: str | None, entries: list) -> str:
     """Assemble the full Daily DevLog Markdown document."""
     ai_block = summary if summary else "_No summary yet. Run /summary first._"
-    diary_block = format_entries(entries) if entries else "_No entries yet._"
+    raw_block = format_raw_entries(entries) if entries else "_No entries yet._"
     return (
         f"# Daily DevLog — {date_str}\n\n"
         f"## AI Summary\n\n{ai_block}\n\n"
         f"---\n\n"
-        f"## Rough Diary\n\n{diary_block}"
+        f"# Rough Journal (Raw Logs)\n\n{raw_block}"
     )

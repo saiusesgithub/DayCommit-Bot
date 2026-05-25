@@ -51,6 +51,8 @@ AI summaries use provider fallback in this order: OpenRouter, then Groq, then Ge
 
 The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. Keep the `{{DIARY_TEXT}}` placeholder in that file; DayCommit replaces it with the combined journal entries at runtime. If the template file is missing, the bot falls back to a built-in safe summary prompt.
 
+Final DevLog files keep AI output and raw logs separate. AI generates only the summary; the `# Rough Journal (Raw Logs)` section is appended directly from stored Telegram messages with original order and line breaks preserved.
+
 ## Commands
 
 - `/today` - Show today's logs
@@ -61,7 +63,7 @@ The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. 
 - `/summary` - Generate and save today's AI summary
 - `/regenerate` - Regenerate and overwrite today's AI summary
 - `/edit_summary` - Send today's saved summary back for manual editing
-- `/preview` - Preview the final Daily DevLog markdown
+- `/preview` - Send the final Daily DevLog as `devlog_YYYY-MM-DD.md`
 - `/push` - Push today's DevLog to GitHub
 - `/backup` - Create a manual SQLite backup in `BACKUP_DIR`
 - `/delete_last` - Delete the most recent log entry
