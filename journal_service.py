@@ -1,14 +1,24 @@
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+
 from database import get_connection
+from timezone_utils import LOCAL_TZ
+
+
+def _local_date(offset_days: int = 0) -> str:
+    """Return the current date in the configured local timezone as YYYY-MM-DD."""
+    local_now = datetime.now(LOCAL_TZ)
+    if offset_days:
+        local_now += timedelta(days=offset_days)
+    return local_now.date().isoformat()
 
 
 def add_entry(user_id: int, text: str) -> int:
-    today = date.today().isoformat()
+    entry_date = _local_date()
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO journal_entries (telegram_user_id, message_text, entry_date, created_at) "
             "VALUES (?, ?, ?, datetime('now'))",
-            (user_id, text, today),
+            (user_id, text, entry_date),
         )
         conn.commit()
         return cursor.lastrowid
@@ -26,12 +36,11 @@ def get_entries_for_date(user_id: int, target_date: str) -> list:
 
 
 def get_today_entries(user_id: int) -> list:
-    return get_entries_for_date(user_id, date.today().isoformat())
+    return get_entries_for_date(user_id, _local_date())
 
 
 def get_yesterday_entries(user_id: int) -> list:
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
-    return get_entries_for_date(user_id, yesterday)
+    return get_entries_for_date(user_id, _local_date(offset_days=-1))
 
 
 def delete_last_entry(user_id: int) -> bool:
