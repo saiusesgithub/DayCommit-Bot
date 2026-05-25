@@ -19,7 +19,7 @@ structured Markdown summary. `/preview` assembles the full Daily DevLog document
 
 - Journal logging, viewing, and deleting: done
 - Timezone-aware dates and display: done
-- AI summary (`/summary`) with Gemini primary + Groq fallback: done
+- AI summary (`/summary`) with OpenRouter primary, then Groq and Gemini fallbacks: done
 - Full DevLog preview (`/preview`): done
 - GitHub push (`/push`) via GitHub REST API: done
 - Export and search: not yet implemented
@@ -35,8 +35,9 @@ structured Markdown summary. `/preview` assembles the full Daily DevLog document
 | Database      | SQLite (stdlib `sqlite3`)             | —        |
 | Config        | python-dotenv                         | 1.0.1    |
 | Timezones     | `zoneinfo` (stdlib) + `tzdata`        | 2025.2   |
-| AI (primary)  | Google Gemini via `google-generativeai` | 0.8.6  |
+| AI (primary)  | OpenRouter OpenAI-compatible chat API via `httpx` | 0.28.1 |
 | AI (fallback) | Groq (llama-3.3-70b-versatile) via `groq` | 1.2.0 |
+| AI (fallback) | Google Gemini via `google-generativeai` | 0.8.6 |
 | GitHub API    | `httpx` async HTTP client             | 0.28.1   |
 | Runtime       | Local polling (no webhook)            | —        |
 
@@ -52,7 +53,7 @@ DayCommit-Bot/
 ├── summary_service.py — business logic: save / get AI summaries
 ├── devlog.py          — shared Daily DevLog formatting + markdown builder
 ├── github_service.py  — GitHub REST API push/update logic + push audit storage
-├── ai_service.py      — Gemini + Groq AI calls; fallback logic
+├── ai_service.py      — OpenRouter, Groq, Gemini provider fallback logic
 ├── database.py        — SQLite init, table schemas, connection context manager
 ├── config.py          — loads .env; exposes all config constants
 ├── timezone_utils.py  — LOCAL_TZ (ZoneInfo) + utc_to_local() helper
@@ -138,9 +139,11 @@ Without `tzdata`, `ZoneInfo("Asia/Kolkata")` raises `ZoneInfoNotFoundError` on W
        ▼
 ai_service.generate_summary(entries_text)
        │
-       ├── try: _gemini_summary()   ← GEMINI_MODEL, default gemini-3.5-flash
+       ├── try: _openrouter_summary() ← OPENROUTER_MODEL, default openai/gpt-4o-mini
        │         if any exception ↓
-       └── fallback: _groq_summary() ← GROQ_MODEL, default llama-3.3-70b-versatile
+       ├── try: _groq_summary()       ← GROQ_MODEL, default llama-3.3-70b-versatile
+       │         if any exception ↓
+       └── try: _gemini_summary()     ← GEMINI_MODEL, default gemini-3.5-flash
        │
        ▼
 summary_service.save_summary()    ← upsert into daily_summaries
@@ -151,8 +154,9 @@ bot sends summary text to user
 
 - Both AI clients are lazy-initialized (only created on first `/summary` call).
 - Model names are configurable via `.env` so provider deprecations do not require code edits.
-- If Gemini fails for any reason, Groq takes over silently — user just gets their summary.
-- If both fail, the exception bubbles up and the bot replies with a clear error message.
+- If a provider fails, the next provider takes over silently — user just gets their summary.
+- Provider failure logs include only provider name and a sanitized error string, never API keys or full request URLs.
+- If all providers fail, the exception bubbles up and the bot replies with a clear error message.
 - `google-generativeai` shows a FutureWarning about deprecation; it is suppressed via `warnings.catch_warnings()`. Migrate to `google-genai` SDK when ready.
 
 ---
@@ -243,7 +247,7 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 4. **`delete_last` is global** (not scoped to today). Deletes the single most recent entry regardless of date.
 5. **No `parse_mode` on diary output.** User text may contain `*`, `_`, `` ` `` which break Markdown parsing. Only `/help` and `/start` use `parse_mode="Markdown"`.
 6. **`TIMEZONE` is the single source of truth.** Change it in `.env` to relocate the bot. `LOCAL_TZ` is built once in `timezone_utils.py` and imported everywhere.
-7. **AI fallback is silent.** The user never sees "Gemini failed, using Groq" — they just get a summary. Failures are logged server-side only.
+7. **AI fallback is silent.** The user never sees provider fallback details — they just get a summary. Sanitized failures are logged server-side only.
 8. **Preview and push share one markdown builder.** `devlog.build_markdown()` is the source of truth for final Daily DevLog output.
 9. **GitHub logic stays outside `bot.py`.** The Telegram handler only validates local prerequisites, builds markdown, calls `github_service`, and formats the reply.
 
@@ -254,10 +258,12 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 | Variable             | Required | Default         | Description                                    |
 |----------------------|----------|-----------------|------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN` | Yes      | —               | From @BotFather                                |
-| `GEMINI_API_KEY`     | Yes*     | —               | Google AI Studio — primary AI model            |
-| `GROQ_API_KEY`       | Yes*     | —               | Groq Cloud — fallback AI if Gemini unavailable |
+| `OPENROUTER_API_KEY` | Yes*     | —               | OpenRouter primary AI provider                 |
+| `OPENROUTER_MODEL`   | No       | `openai/gpt-4o-mini` | OpenRouter model used by `/summary`       |
+| `GROQ_API_KEY`       | Yes*     | —               | Groq fallback AI provider                      |
 | `GEMINI_MODEL`       | No       | `gemini-3.5-flash` | Gemini model used by `/summary`             |
 | `GROQ_MODEL`         | No       | `llama-3.3-70b-versatile` | Groq fallback model used by `/summary` |
+| `GEMINI_API_KEY`     | Yes*     | —               | Google AI Studio fallback AI provider          |
 | `GITHUB_TOKEN`       | Yes**    | —               | GitHub token with repo contents write access   |
 | `GITHUB_OWNER`       | Yes**    | —               | GitHub username or organization                |
 | `GITHUB_REPO`        | Yes**    | —               | Repository name                                |
@@ -265,7 +271,7 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 | `DB_PATH`            | No       | `daycommit.db`  | Path to SQLite DB file                         |
 | `TIMEZONE`           | No       | `Asia/Kolkata`  | IANA timezone name for display and dates       |
 
-\* At least one of `GEMINI_API_KEY` or `GROQ_API_KEY` must be set to use `/summary`.
+\* At least one of `OPENROUTER_API_KEY`, `GROQ_API_KEY`, or `GEMINI_API_KEY` must be set to use `/summary`.
 \** Required only for `/push`.
 
 ---
@@ -322,3 +328,4 @@ python main.py
 | 2026-05-25 | `/delete_last` replied generic "deleted" with no content                      | Returns `message_text` from service and echoes it in reply          |
 | 2026-05-25 | `google-generativeai` deprecated; `google-genai` failed to install on Windows | Using `google-generativeai` 0.8.6 with FutureWarning suppressed; Groq added as fallback |
 | 2026-05-25 | `/summary` failed because `gemini-1.5-flash` was unavailable and old Groq SDK crashed with `httpx 0.28` | Added configurable model names, defaulted to current Gemini/Groq models, and upgraded `groq` to 1.2.0 |
+| 2026-05-25 | AI fallback was hardcoded around Gemini first, then Groq | Refactored `ai_service.py` into OpenRouter → Groq → Gemini provider fallback with sanitized provider logs |
