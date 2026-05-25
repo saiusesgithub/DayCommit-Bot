@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -20,19 +20,35 @@ from timezone_utils import LOCAL_TZ
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """
-*DayCommit* — your personal developer journal
+*DayCommit Commands*
 
-Just send any message and it's saved as a log for today.
-
-*Commands:*
-/today — Show all logs for today
-/yesterday — Show yesterday's logs
-/summary — Generate AI summary of today's logs
-/preview — Full DevLog preview (AI + diary)
-/push — Push today's DevLog to GitHub
-/delete_last — Delete the most recent log entry
-/help — Show this message
+/today — View today's logs
+/summary — Generate AI summary
+/preview — Preview final markdown
+/push — Push to GitHub
+/delete_last — Delete latest log
+/yesterday — View yesterday's logs
+/help — Show this menu
 """.strip()
+
+BOT_COMMANDS = [
+    BotCommand("start", "Start DayCommit"),
+    BotCommand("help", "Show available commands"),
+    BotCommand("today", "Show today's logs"),
+    BotCommand("yesterday", "Show yesterday's logs"),
+    BotCommand("summary", "Generate AI summary"),
+    BotCommand("preview", "Preview final Daily DevLog"),
+    BotCommand("push", "Push today's DevLog to GitHub"),
+    BotCommand("delete_last", "Delete latest log entry"),
+]
+
+
+async def register_bot_commands(app: Application) -> None:
+    try:
+        await app.bot.set_my_commands(BOT_COMMANDS)
+        logger.info("Telegram bot command menu registered.")
+    except Exception as exc:
+        logger.warning("Failed to register Telegram bot command menu: %s", exc.__class__.__name__)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -195,7 +211,7 @@ async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def build_application(token: str) -> Application:
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(register_bot_commands).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))

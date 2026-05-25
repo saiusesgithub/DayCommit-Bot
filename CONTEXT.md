@@ -215,6 +215,8 @@ record commit SHA in github_pushes after successful API response
 | `/delete_last` | `cmd_delete_last`| Delete most recent entry; echoes the deleted text                  |
 | *(any text)*   | `handle_message` | Save as journal entry; reply "Logged."                             |
 
+Telegram's slash-command menu is registered on startup via `set_my_commands()` in the application `post_init` hook. If registration fails, the bot logs a warning and continues polling.
+
 ### /preview output format
 
 ```
@@ -335,3 +337,4 @@ python main.py
 | 2026-05-25 | `/summary` failed because `gemini-1.5-flash` was unavailable and old Groq SDK crashed with `httpx 0.28` | Added configurable model names, defaulted to current Gemini/Groq models, and upgraded `groq` to 1.2.0 |
 | 2026-05-25 | AI fallback was hardcoded around Gemini first, then Groq | Refactored `ai_service.py` into OpenRouter → Groq → Gemini provider fallback with sanitized provider logs |
 | 2026-05-25 | `/summary` prompt was hardcoded in `ai_service.py` | Moved editable prompt style to `prompts/daily_summary_template.md` with `{{DIARY_TEXT}}` runtime replacement |
+| 2026-05-25 | Telegram slash-command menu was not populated | Added startup `set_my_commands()` registration and cleaner `/help` text |
