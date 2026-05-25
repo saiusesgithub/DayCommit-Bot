@@ -42,6 +42,7 @@ GITHUB_TOKEN=...
 GITHUB_OWNER=...
 GITHUB_REPO=...
 GITHUB_BRANCH=main
+ALLOW_RAW_PUSH_WITHOUT_AI=true
 DB_PATH=/data/daycommit.db
 BACKUP_DIR=daycommit-backups
 TIMEZONE=Asia/Kolkata
@@ -55,7 +56,9 @@ AI summaries use provider fallback in this order: OpenRouter models, then Cerebr
 
 The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. Keep the `{{DIARY_TEXT}}` placeholder in that file; DayCommit replaces it with the combined journal entries at runtime. If the template file is missing, the bot falls back to a built-in safe summary prompt.
 
-Final DevLog files keep AI output and raw logs separate. AI generates only the summary; the `# Rough Journal (Raw Logs)` section is appended directly from stored Telegram messages with original order and line breaks preserved.
+Final DevLog files keep AI output and raw logs separate. AI generates only the summary; the `# Rough Journal` section is appended directly from stored Telegram messages with original order and line breaks preserved.
+
+AI is optional for preview and GitHub publishing. If no saved summary exists, `/preview` builds the DevLog with `_AI summary unavailable or skipped for today._`; `/push` asks whether to use `/push_raw`, and `/push_raw` publishes the same raw DevLog when `ALLOW_RAW_PUSH_WITHOUT_AI=true`.
 
 ## Commands
 
@@ -69,6 +72,7 @@ Final DevLog files keep AI output and raw logs separate. AI generates only the s
 - `/edit_summary` - Send today's saved summary back for manual editing
 - `/preview` - Send the final Daily DevLog as `devlog_YYYY-MM-DD.md`
 - `/push` - Push today's DevLog to GitHub
+- `/push_raw` - Push today's DevLog without requiring an AI summary
 - `/backup` - Create a manual SQLite backup in `BACKUP_DIR`
 - `/delete_last` - Delete the most recent log entry
 - `/undo` - Undo the latest journal add/delete action

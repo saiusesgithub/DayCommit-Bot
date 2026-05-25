@@ -22,6 +22,7 @@ structured Markdown summary. `/preview` assembles the full Daily DevLog document
 - AI summary (`/summary`) with OpenRouter model list primary, then Cerebras, Groq, and Gemini fallbacks: done
 - Full DevLog preview (`/preview`): done
 - GitHub push (`/push`) via GitHub REST API: done
+- Graceful no-AI preview and raw GitHub push (`/push_raw`): done
 - Export and search: not yet implemented
 
 ---
@@ -194,7 +195,9 @@ bot sends summary text to user
 bot.cmd_push
   get today's journal entries
   get today's saved AI summary
-  require entries + saved summary
+  require entries
+  use saved summary when available
+  otherwise /push asks user to choose /push_raw or /summary
        │
        ▼
 devlog.build_markdown()           ← same final Markdown as /preview
@@ -215,7 +218,8 @@ record commit SHA in github_pushes after successful API response
 - Commit message is `Add devlog for YYYY-MM-DD` for new files and `Update devlog for YYYY-MM-DD` for existing files.
 - Existing files are detected first; updates include the current GitHub file `sha`.
 - Content is sent as base64, per GitHub Contents API requirements.
-- The bot only writes to `github_pushes` after GitHub returns success. Journal entries and summaries are never modified by `/push`.
+- `/push_raw` publishes the same DevLog with fallback AI text when no summary exists and `ALLOW_RAW_PUSH_WITHOUT_AI=true`.
+- The bot only writes to `github_pushes` after GitHub returns success. Journal entries and summaries are never modified by `/push` or `/push_raw`.
 - Known GitHub config/auth/permission failures are converted to clear user-facing messages.
 
 ---
@@ -235,7 +239,8 @@ record commit SHA in github_pushes after successful API response
 | `/regenerate`  | `cmd_regenerate` | Regenerate and overwrite today's AI summary                        |
 | `/edit_summary`| `cmd_edit_summary`| Start manual edit flow for today's saved summary                  |
 | `/preview`     | `cmd_preview`    | Send full Daily DevLog markdown as `devlog_YYYY-MM-DD.md`          |
-| `/push`        | `cmd_push`       | Push today's saved-summary DevLog to GitHub                        |
+| `/push`        | `cmd_push`       | Push today's DevLog to GitHub when a summary exists; otherwise suggests `/push_raw` or `/summary` |
+| `/push_raw`    | `cmd_push_raw`   | Push today's DevLog with fallback AI text and raw logs             |
 | `/backup`      | `cmd_backup`     | Create a manual SQLite backup                                      |
 | `/delete_last` | `cmd_delete_last`| Delete most recent entry; echoes the deleted text                  |
 | `/undo`        | `cmd_undo`       | Undo latest journal add/delete action                              |
@@ -256,7 +261,7 @@ Undo is intentionally scoped to journal add/delete actions only. It does not rol
 
 ### /preview output format
 
-`/preview` requires both today's journal entries and a saved AI summary. It builds the final document with `devlog.build_markdown()` and sends it as `devlog_YYYY-MM-DD.md` instead of a large Telegram text message.
+`/preview` requires today's journal entries. A saved AI summary is used when available; otherwise the AI section uses `_AI summary unavailable or skipped for today._`. It builds the final document with `devlog.build_markdown()` and sends it as `devlog_YYYY-MM-DD.md` instead of a large Telegram text message.
 
 ```
 # Daily DevLog — YYYY-MM-DD
@@ -273,15 +278,12 @@ Undo is intentionally scoped to journal add/delete actions only. It does not rol
 
 ---
 
-## Rough Journal (Raw Logs)
+# Rough Journal
 
-1.
 first log
 
-2.
 second log
 
-3.
 multiline log title
 continuation line
 ```
@@ -304,7 +306,8 @@ Long `/summary`, `/regenerate`, and `/edit_summary` summary text is sent as `sum
 8. **Preview and push share one markdown builder.** `devlog.build_markdown()` is the source of truth for final Daily DevLog output.
 9. **GitHub logic stays outside `bot.py`.** The Telegram handler only validates local prerequisites, builds markdown, calls `github_service`, and formats the reply.
 10. **Summary edit state is in-memory.** If the process restarts during `/edit_summary`, the user must run `/edit_summary` again.
-11. **Raw logs never pass through AI in final DevLogs.** AI generates only the summary. `devlog.build_markdown()` appends raw `journal_entries.message_text` from SQLite directly under `# Rough Journal (Raw Logs)`.
+11. **Raw logs never pass through AI in final DevLogs.** AI generates only the summary. `devlog.build_markdown()` appends raw `journal_entries.message_text` from SQLite directly under `# Rough Journal`.
+12. **AI is not required for core journal operations.** Journaling, preview, backups, `/push_raw`, and raw DevLog publishing continue to work when AI providers fail or no summary exists.
 
 ---
 
@@ -327,6 +330,7 @@ Long `/summary`, `/regenerate`, and `/edit_summary` summary text is sent as `sum
 | `GITHUB_OWNER`       | Yes**    | —               | GitHub username or organization                |
 | `GITHUB_REPO`        | Yes**    | —               | Repository name                                |
 | `GITHUB_BRANCH`      | No       | `main`          | Branch to create/update DevLog files on        |
+| `ALLOW_RAW_PUSH_WITHOUT_AI` | No | `true`          | Allows `/push_raw` to publish DevLogs without a saved AI summary |
 | `DB_PATH`            | No       | `daycommit.db`  | Path to SQLite DB file                         |
 | `BACKUP_DIR`         | No       | `daycommit-backups` | Directory for manual SQLite backups       |
 | `TIMEZONE`           | No       | `Asia/Kolkata`  | IANA timezone name for display and dates       |
@@ -397,5 +401,6 @@ python main.py
 | 2026-05-25 | No quick state check, historical date view, manual backup, or close-of-day reminder | Added `/status`, `/history`, `/backup`, and a 23:00 local JobQueue reminder |
 | 2026-05-25 | No weekly review or persistent undo for journal edits | Added `/week` and `/undo` backed by `undo_actions` |
 | 2026-05-25 | Large previews and summaries could hit Telegram message length limits | `/preview` now sends a `.md` file; long summaries/edit summaries are sent as files |
-| 2026-05-25 | Final raw journal section used a formatter that trimmed and indented user messages | Added raw-log final formatter so final DevLogs append exact stored messages under `# Rough Journal (Raw Logs)` |
+| 2026-05-25 | Final raw journal section used a formatter that trimmed and indented user messages | Added raw-log final formatter so final DevLogs append exact stored messages under `# Rough Journal` |
 | 2026-05-25 | Long `/today` responses could exceed Telegram message limits | `/today`, `/yesterday`, and `/history` now send raw journal `.md` files |
+| 2026-05-25 | Missing or failed AI summaries could block preview/push workflows | `/preview` now uses fallback AI text, `/push` suggests raw publishing, and `/push_raw` can publish raw DevLogs |

@@ -22,6 +22,12 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+ALLOW_RAW_PUSH_WITHOUT_AI = os.getenv("ALLOW_RAW_PUSH_WITHOUT_AI", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN is not set. Add it to your .env file.")

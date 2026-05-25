@@ -17,6 +17,7 @@ import journal_service
 import ai_service
 import summary_service
 import github_service
+from config import ALLOW_RAW_PUSH_WITHOUT_AI
 from timezone_utils import LOCAL_TZ
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ HELP_TEXT = """
 /edit_summary — Edit saved summary
 /preview — Preview final markdown
 /push — Push to GitHub
+/push_raw — Push raw DevLog without AI summary
 /backup — Create database backup
 /delete_last — Delete latest log
 /undo — Undo latest log add/delete
@@ -57,6 +59,7 @@ BOT_COMMANDS = [
     BotCommand("edit_summary", "Edit saved summary"),
     BotCommand("preview", "Preview final Daily DevLog"),
     BotCommand("push", "Push today's DevLog to GitHub"),
+    BotCommand("push_raw", "Push raw DevLog without AI summary"),
     BotCommand("backup", "Create database backup"),
     BotCommand("delete_last", "Delete latest log entry"),
     BotCommand("undo", "Undo latest log add/delete"),
@@ -177,8 +180,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     await update.message.reply_text(
         f"Logs: {log_count}\n"
-        f"Summary: {'Generated' if has_summary else 'Not generated'}\n"
-        f"GitHub: {'Pushed' if push else 'Not pushed'}\n"
+        f"Summary: {'Generated' if has_summary else 'Missing'}\n"
+        f"GitHub Push: {'Pushed' if push else 'Available'}\n"
         f"Last push: {push['pushed_at'] if push else '—'}\n"
         f"Streak: {streak} {'day' if streak == 1 else 'days'}"
     )
@@ -434,10 +437,6 @@ async def cmd_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"No logs for today ({today_str}). Nothing to preview.")
         return
 
-    if not summary:
-        await update.message.reply_text("No AI summary found. Run /summary first.")
-        return
-
     preview = devlog.build_markdown(today_str, summary, entries)
     await send_markdown_file(update, f"devlog_{today_str}.md", preview)
 
@@ -456,7 +455,10 @@ async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ai_summary = summary_service.get_today_summary(user_id)
     if not ai_summary:
         await update.message.reply_text(
-            "No AI summary found. Run /summary first, then /push."
+            "No AI summary found. Push raw journal only?\n\n"
+            "Suggested commands:\n"
+            "/push_raw\n"
+            "/summary"
         )
         return
 
@@ -483,6 +485,38 @@ async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 
+async def cmd_push_raw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
+    if not ALLOW_RAW_PUSH_WITHOUT_AI:
+        await update.message.reply_text(
+            "Raw pushes without AI summary are disabled by ALLOW_RAW_PUSH_WITHOUT_AI."
+        )
+        return
+
+    entries = journal_service.get_today_entries(user_id)
+    if not entries:
+        await update.message.reply_text(
+            f"No logs for today ({today_str}). Nothing to push."
+        )
+        return
+
+    await update.message.reply_text("Pushing raw DevLog to GitHub...")
+    markdown = devlog.build_markdown(today_str, None, entries)
+
+    try:
+        await github_service.push_devlog(user_id, today_str, markdown)
+        await update.message.reply_text("Raw DevLog pushed successfully ✅")
+    except RuntimeError as e:
+        await update.message.reply_text(str(e))
+    except Exception:
+        logger.exception("GitHub raw push failed for user %s", user_id)
+        await update.message.reply_text(
+            "GitHub push failed. Your local data is safe. Check bot logs for details."
+        )
+
+
 def build_application(token: str) -> Application:
     app = Application.builder().token(token).post_init(register_bot_commands).build()
 
@@ -498,6 +532,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("edit_summary", cmd_edit_summary))
     app.add_handler(CommandHandler("preview", cmd_preview))
     app.add_handler(CommandHandler("push", cmd_push))
+    app.add_handler(CommandHandler("push_raw", cmd_push_raw))
     app.add_handler(CommandHandler("backup", cmd_backup))
     app.add_handler(CommandHandler("delete_last", cmd_delete_last))
     app.add_handler(CommandHandler("undo", cmd_undo))
