@@ -7,7 +7,7 @@ with warnings.catch_warnings():
 
 from groq import AsyncGroq
 
-from config import GEMINI_API_KEY, GROQ_API_KEY
+from config import GEMINI_API_KEY, GEMINI_MODEL, GROQ_API_KEY, GROQ_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def _get_gemini():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", FutureWarning)
             genai.configure(api_key=GEMINI_API_KEY)
-            _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+            _gemini_model = genai.GenerativeModel(GEMINI_MODEL)
     return _gemini_model
 
 
@@ -78,7 +78,7 @@ async def _gemini_summary(prompt: str) -> str:
 async def _groq_summary(prompt: str) -> str:
     client = _get_groq()
     response = await client.chat.completions.create(
-        model="llama3-70b-8192",
+        model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.choices[0].message.content.strip()

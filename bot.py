@@ -10,24 +10,14 @@ from telegram.ext import (
     filters,
 )
 
+import devlog
 import journal_service
 import ai_service
 import summary_service
+import github_service
 from timezone_utils import LOCAL_TZ
 
 logger = logging.getLogger(__name__)
-
-
-def _format_entries(entries: list) -> str:
-    """Return numbered, multiline-safe plain-text block for a list of journal entries."""
-    parts = []
-    for i, entry in enumerate(entries, 1):
-        prefix = f"{i}. "
-        indent = " " * len(prefix)
-        lines = entry["message_text"].strip().split("\n")
-        body = ("\n" + indent).join(line.rstrip() for line in lines)
-        parts.append(prefix + body)
-    return "\n".join(parts)
 
 HELP_TEXT = """
 *DayCommit* — your personal developer journal
@@ -39,6 +29,7 @@ Just send any message and it's saved as a log for today.
 /yesterday — Show yesterday's logs
 /summary — Generate AI summary of today's logs
 /preview — Full DevLog preview (AI + diary)
+/push — Push today's DevLog to GitHub
 /delete_last — Delete the most recent log entry
 /help — Show this message
 """.strip()
@@ -65,9 +56,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Logged.")
     except Exception:
         logger.exception("Failed to save entry for user %s", user_id)
-        await update.message.reply_text(
-            "Failed to save your log. Please try again."
-        )
+        await update.message.reply_text("Failed to save your log. Please try again.")
 
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -80,7 +69,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await update.message.reply_text(
-        f"Today's logs — {today_str}\n\n{_format_entries(entries)}"
+        f"Today's logs — {today_str}\n\n{devlog.format_entries(entries)}"
     )
 
 
@@ -94,7 +83,7 @@ async def cmd_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await update.message.reply_text(
-        f"Yesterday's logs — {yesterday_str}\n\n{_format_entries(entries)}"
+        f"Yesterday's logs — {yesterday_str}\n\n{devlog.format_entries(entries)}"
     )
 
 
@@ -108,9 +97,7 @@ async def cmd_delete_last(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("No log entries to delete.")
     except Exception:
         logger.exception("Failed to delete entry for user %s", user_id)
-        await update.message.reply_text(
-            "Failed to delete the last entry. Please try again."
-        )
+        await update.message.reply_text("Failed to delete the last entry. Please try again.")
 
 
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -137,7 +124,7 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception:
         logger.exception("Failed to generate summary for user %s", user_id)
         await update.message.reply_text(
-            "Failed to generate summary. Check your GEMINI_API_KEY and try again."
+            "Failed to generate summary. Check your API keys and try again."
         )
 
 
@@ -152,23 +139,59 @@ async def cmd_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Nothing logged today yet.")
         return
 
-    ai_block = summary if summary else "_No summary yet. Run /summary first._"
-    diary_block = _format_entries(entries) if entries else "_No entries yet._"
-
-    preview = (
-        f"# Daily DevLog — {today_str}\n\n"
-        f"## AI Summary\n\n{ai_block}\n\n"
-        f"---\n\n"
-        f"## Rough Diary\n\n{diary_block}"
-    )
+    preview = devlog.build_markdown(today_str, summary, entries)
 
     if len(preview) <= 4000:
         await update.message.reply_text(preview)
     else:
-        part1 = f"# Daily DevLog — {today_str}\n\n## AI Summary\n\n{ai_block}"
-        part2 = f"## Rough Diary\n\n{diary_block}"
-        await update.message.reply_text(part1)
-        await update.message.reply_text(part2)
+        ai_block = summary if summary else "_No summary yet. Run /summary first._"
+        await update.message.reply_text(
+            f"# Daily DevLog — {today_str}\n\n## AI Summary\n\n{ai_block}"
+        )
+        await update.message.reply_text(
+            f"## Rough Diary\n\n{devlog.format_entries(entries)}"
+        )
+
+
+async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
+    entries = journal_service.get_today_entries(user_id)
+    if not entries:
+        await update.message.reply_text(
+            f"No logs for today ({today_str}). Nothing to push."
+        )
+        return
+
+    ai_summary = summary_service.get_today_summary(user_id)
+    if not ai_summary:
+        await update.message.reply_text(
+            "No AI summary found. Run /summary first, then /push."
+        )
+        return
+
+    await update.message.reply_text("Pushing to GitHub...")
+
+    markdown = devlog.build_markdown(today_str, ai_summary, entries)
+
+    try:
+        result = await github_service.push_devlog(user_id, today_str, markdown)
+        action = result["action"].capitalize()
+        short_sha = result["sha"][:7]
+        await update.message.reply_text(
+            f"{action} successfully.\n\n"
+            f"Commit: {short_sha}\n"
+            f"Path: {result['path']}\n"
+            f"{result['url']}"
+        )
+    except RuntimeError as e:
+        await update.message.reply_text(str(e))
+    except Exception:
+        logger.exception("GitHub push failed for user %s", user_id)
+        await update.message.reply_text(
+            "GitHub push failed. Your local data is safe. Check bot logs for details."
+        )
 
 
 def build_application(token: str) -> Application:
@@ -180,6 +203,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("yesterday", cmd_yesterday))
     app.add_handler(CommandHandler("summary", cmd_summary))
     app.add_handler(CommandHandler("preview", cmd_preview))
+    app.add_handler(CommandHandler("push", cmd_push))
     app.add_handler(CommandHandler("delete_last", cmd_delete_last))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
