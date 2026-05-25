@@ -18,6 +18,19 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_user_date "
             "ON journal_entries (telegram_user_id, entry_date)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_summaries (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER NOT NULL,
+                summary_date     TEXT    NOT NULL,
+                summary_text     TEXT    NOT NULL,
+                created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_summary_date "
+            "ON daily_summaries (telegram_user_id, summary_date)"
+        )
         conn.commit()
 
 

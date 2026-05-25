@@ -11,6 +11,8 @@ from telegram.ext import (
 )
 
 import journal_service
+import ai_service
+import summary_service
 from timezone_utils import LOCAL_TZ
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,8 @@ Just send any message and it's saved as a log for today.
 *Commands:*
 /today — Show all logs for today
 /yesterday — Show yesterday's logs
+/summary — Generate AI summary of today's logs
+/preview — Full DevLog preview (AI + diary)
 /delete_last — Delete the most recent log entry
 /help — Show this message
 """.strip()
@@ -109,6 +113,64 @@ async def cmd_delete_last(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    entries = journal_service.get_today_entries(user_id)
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
+    if not entries:
+        await update.message.reply_text(f"No logs for today ({today_str}) to summarize.")
+        return
+
+    await update.message.reply_text("Generating summary...")
+
+    entries_text = "\n".join(
+        f"{i}. {entry['message_text']}" for i, entry in enumerate(entries, 1)
+    )
+
+    try:
+        summary = await ai_service.generate_summary(entries_text)
+        summary_service.save_summary(user_id, summary)
+        await update.message.reply_text(summary)
+    except RuntimeError as e:
+        await update.message.reply_text(str(e))
+    except Exception:
+        logger.exception("Failed to generate summary for user %s", user_id)
+        await update.message.reply_text(
+            "Failed to generate summary. Check your GEMINI_API_KEY and try again."
+        )
+
+
+async def cmd_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
+    summary = summary_service.get_today_summary(user_id)
+    entries = journal_service.get_today_entries(user_id)
+
+    if not summary and not entries:
+        await update.message.reply_text("Nothing logged today yet.")
+        return
+
+    ai_block = summary if summary else "_No summary yet. Run /summary first._"
+    diary_block = _format_entries(entries) if entries else "_No entries yet._"
+
+    preview = (
+        f"# Daily DevLog — {today_str}\n\n"
+        f"## AI Summary\n\n{ai_block}\n\n"
+        f"---\n\n"
+        f"## Rough Diary\n\n{diary_block}"
+    )
+
+    if len(preview) <= 4000:
+        await update.message.reply_text(preview)
+    else:
+        part1 = f"# Daily DevLog — {today_str}\n\n## AI Summary\n\n{ai_block}"
+        part2 = f"## Rough Diary\n\n{diary_block}"
+        await update.message.reply_text(part1)
+        await update.message.reply_text(part2)
+
+
 def build_application(token: str) -> Application:
     app = Application.builder().token(token).build()
 
@@ -116,6 +178,8 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("yesterday", cmd_yesterday))
+    app.add_handler(CommandHandler("summary", cmd_summary))
+    app.add_handler(CommandHandler("preview", cmd_preview))
     app.add_handler(CommandHandler("delete_last", cmd_delete_last))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

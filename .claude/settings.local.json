@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip install google-genai --target \"C:\\\\Users\\\\Saisr\\\\AppData\\\\Roaming\\\\Python\\\\Python313\\\\site-packages\" 2>&1)"
+    ]
+  }
+}
