@@ -121,3 +121,13 @@ def _record_push(user_id: int, date_str: str, file_path: str, commit_sha: str) -
             (user_id, date_str, file_path, commit_sha),
         )
         conn.commit()
+
+
+def get_push_for_date(user_id: int, target_date: str):
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM github_pushes "
+            "WHERE telegram_user_id = ? AND entry_date = ?",
+            (user_id, target_date),
+        )
+        return cursor.fetchone()

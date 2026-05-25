@@ -35,6 +35,44 @@ def get_entries_for_date(user_id: int, target_date: str) -> list:
         return cursor.fetchall()
 
 
+def count_entries_for_date(user_id: int, target_date: str) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) AS count FROM journal_entries "
+            "WHERE telegram_user_id = ? AND entry_date = ?",
+            (user_id, target_date),
+        )
+        row = cursor.fetchone()
+        return int(row["count"])
+
+
+def get_user_ids_with_entries_for_date(target_date: str) -> list[int]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT DISTINCT telegram_user_id FROM journal_entries "
+            "WHERE entry_date = ?",
+            (target_date,),
+        )
+        return [int(row["telegram_user_id"]) for row in cursor.fetchall()]
+
+
+def calculate_streak(user_id: int) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT DISTINCT entry_date FROM journal_entries "
+            "WHERE telegram_user_id = ?",
+            (user_id,),
+        )
+        logged_dates = {row["entry_date"] for row in cursor.fetchall()}
+
+    streak = 0
+    current = datetime.now(LOCAL_TZ).date()
+    while current.isoformat() in logged_dates:
+        streak += 1
+        current -= timedelta(days=1)
+    return streak
+
+
 def get_today_entries(user_id: int) -> list:
     return get_entries_for_date(user_id, _local_date())
 

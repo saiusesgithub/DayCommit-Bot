@@ -53,6 +53,7 @@ DayCommit-Bot/
 ├── summary_service.py — business logic: save / get AI summaries
 ├── devlog.py          — shared Daily DevLog formatting + markdown builder
 ├── github_service.py  — GitHub REST API push/update logic + push audit storage
+├── backup_service.py  — manual SQLite backup creation
 ├── ai_service.py      — OpenRouter, Groq, Gemini provider fallback logic
 ├── prompts/
 │   └── daily_summary_template.md — editable /summary prompt template
@@ -208,12 +209,15 @@ record commit SHA in github_pushes after successful API response
 | `/start`       | `cmd_start`      | Welcome message                                                    |
 | `/help`        | `cmd_help`       | Show all commands                                                  |
 | `/today`       | `cmd_today`      | Numbered list of today's entries (no timestamps)                   |
+| `/status`      | `cmd_status`     | Show logs, summary, push state, last push, and streak for today    |
+| `/history`     | `cmd_history`    | View logs for a given `YYYY-MM-DD` date                            |
 | `/yesterday`   | `cmd_yesterday`  | Numbered list of yesterday's entries                               |
 | `/summary`     | `cmd_summary`    | Generate AI summary of today's logs; stores in DB; sends to user  |
 | `/regenerate`  | `cmd_regenerate` | Regenerate and overwrite today's AI summary                        |
 | `/edit_summary`| `cmd_edit_summary`| Start manual edit flow for today's saved summary                  |
 | `/preview`     | `cmd_preview`    | Full Daily DevLog markdown: AI summary + raw diary                 |
 | `/push`        | `cmd_push`       | Push today's saved-summary DevLog to GitHub                        |
+| `/backup`      | `cmd_backup`     | Create a manual SQLite backup                                      |
 | `/delete_last` | `cmd_delete_last`| Delete most recent entry; echoes the deleted text                  |
 | `/cancel`      | `cmd_cancel`     | Cancel summary editing mode                                       |
 | *(any text)*   | `handle_message` | Save as journal entry; reply "Logged."                             |
@@ -221,6 +225,10 @@ record commit SHA in github_pushes after successful API response
 Telegram's slash-command menu is registered on startup via `set_my_commands()` in the application `post_init` hook. If registration fails, the bot logs a warning and continues polling.
 
 Manual summary editing uses in-memory per-user state in `bot.py`. While a user is awaiting an edited summary, their next normal text message is saved through `summary_service.save_summary()` instead of being logged as a journal entry. `/cancel` clears that state.
+
+Daily reminders use python-telegram-bot `JobQueue`. At 23:00 in the configured `TIMEZONE`, the bot sends `Want to finish today's DevLog? /summary /preview /push` only to users who have at least one journal entry for the current local date.
+
+Manual backups use SQLite's `.backup()` API and write files named `daycommit_YYYY-MM-DD_HH-MM-SS.db` into `BACKUP_DIR`, which defaults to `daycommit-backups`.
 
 ### /preview output format
 
@@ -282,6 +290,7 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 | `GITHUB_REPO`        | Yes**    | —               | Repository name                                |
 | `GITHUB_BRANCH`      | No       | `main`          | Branch to create/update DevLog files on        |
 | `DB_PATH`            | No       | `daycommit.db`  | Path to SQLite DB file                         |
+| `BACKUP_DIR`         | No       | `daycommit-backups` | Directory for manual SQLite backups       |
 | `TIMEZONE`           | No       | `Asia/Kolkata`  | IANA timezone name for display and dates       |
 
 \* At least one of `OPENROUTER_API_KEY`, `GROQ_API_KEY`, or `GEMINI_API_KEY` must be set to use `/summary`.
@@ -297,6 +306,7 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 - Use a Railway volume mounted at `/data`.
 - Recommended Railway database path: `DB_PATH=/data/daycommit.db`.
 - Keep `.env` and SQLite database files out of git; `.gitignore` excludes `.env`, `*.db`, `*.sqlite`, `*.sqlite3`, and `data/`.
+- Manual backups go to `BACKUP_DIR`; `daycommit-backups/` is ignored by git.
 
 ---
 
@@ -319,7 +329,7 @@ python main.py
 ## What Is NOT Implemented Yet (Roadmap)
 
 - [x] GitHub integration — push daily DevLog as a markdown file commit
-- [ ] `/history` — view logs for an arbitrary past date
+- [x] `/history` — view logs for an arbitrary past date
 - [ ] `/week` — AI summary of the past 7 days
 - [ ] `/export` — download today's DevLog as a `.md` file
 - [ ] `/search` — full-text search across all entries
@@ -345,3 +355,4 @@ python main.py
 | 2026-05-25 | `/summary` prompt was hardcoded in `ai_service.py` | Moved editable prompt style to `prompts/daily_summary_template.md` with `{{DIARY_TEXT}}` runtime replacement |
 | 2026-05-25 | Telegram slash-command menu was not populated | Added startup `set_my_commands()` registration and cleaner `/help` text |
 | 2026-05-25 | Saved AI summaries could not be manually edited or regenerated explicitly | Added `/edit_summary`, `/regenerate`, and `/cancel` with in-memory edit state |
+| 2026-05-25 | No quick state check, historical date view, manual backup, or close-of-day reminder | Added `/status`, `/history`, `/backup`, and a 23:00 local JobQueue reminder |

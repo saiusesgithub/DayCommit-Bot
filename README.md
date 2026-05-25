@@ -39,6 +39,7 @@ GITHUB_OWNER=...
 GITHUB_REPO=...
 GITHUB_BRANCH=main
 DB_PATH=/data/daycommit.db
+BACKUP_DIR=daycommit-backups
 TIMEZONE=Asia/Kolkata
 ```
 
@@ -53,11 +54,16 @@ The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. 
 ## Commands
 
 - `/today` - Show today's logs
+- `/status` - Show today's log count, summary state, GitHub push state, last push, and writing streak
+- `/history YYYY-MM-DD` - Show logs for a specific date
 - `/yesterday` - Show yesterday's logs
 - `/summary` - Generate and save today's AI summary
 - `/regenerate` - Regenerate and overwrite today's AI summary
 - `/edit_summary` - Send today's saved summary back for manual editing
 - `/preview` - Preview the final Daily DevLog markdown
 - `/push` - Push today's DevLog to GitHub
+- `/backup` - Create a manual SQLite backup in `BACKUP_DIR`
 - `/delete_last` - Delete the most recent log entry
 - `/cancel` - Cancel summary editing mode
+
+DayCommit schedules a daily 11:00 PM reminder in the configured `TIMEZONE`: `Want to finish today's DevLog? /summary /preview /push`. It only sends to users who logged something that day.

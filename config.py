@@ -5,6 +5,7 @@ load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("DB_PATH", "daycommit.db")
+BACKUP_DIR = os.getenv("BACKUP_DIR", "daycommit-backups")
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")

@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -10,6 +10,7 @@ from telegram.ext import (
     filters,
 )
 
+import backup_service
 import devlog
 import journal_service
 import ai_service
@@ -23,11 +24,14 @@ HELP_TEXT = """
 *DayCommit Commands*
 
 /today — View today's logs
+/status — View today's DevLog status
+/history — View logs for a date
 /summary — Generate AI summary
 /regenerate — Regenerate AI summary
 /edit_summary — Edit saved summary
 /preview — Preview final markdown
 /push — Push to GitHub
+/backup — Create database backup
 /delete_last — Delete latest log
 /yesterday — View yesterday's logs
 /cancel — Cancel current action
@@ -41,11 +45,14 @@ BOT_COMMANDS = [
     BotCommand("help", "Show available commands"),
     BotCommand("today", "Show today's logs"),
     BotCommand("yesterday", "Show yesterday's logs"),
+    BotCommand("status", "Show today's DevLog status"),
+    BotCommand("history", "Show logs for a date"),
     BotCommand("summary", "Generate AI summary"),
     BotCommand("regenerate", "Regenerate AI summary"),
     BotCommand("edit_summary", "Edit saved summary"),
     BotCommand("preview", "Preview final Daily DevLog"),
     BotCommand("push", "Push today's DevLog to GitHub"),
+    BotCommand("backup", "Create database backup"),
     BotCommand("delete_last", "Delete latest log entry"),
     BotCommand("cancel", "Cancel current action"),
 ]
@@ -57,6 +64,39 @@ async def register_bot_commands(app: Application) -> None:
         logger.info("Telegram bot command menu registered.")
     except Exception as exc:
         logger.warning("Failed to register Telegram bot command menu: %s", exc.__class__.__name__)
+
+    schedule_daily_reminder(app)
+
+
+def schedule_daily_reminder(app: Application) -> None:
+    if app.job_queue is None:
+        logger.warning("Daily reminder not scheduled: JobQueue is unavailable.")
+        return
+
+    app.job_queue.run_daily(
+        send_daily_reminders,
+        time=time(hour=23, minute=0, tzinfo=LOCAL_TZ),
+        name="daily_devlog_reminder",
+    )
+    logger.info("Daily DevLog reminder scheduled for 23:00 local time.")
+
+
+async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
+    today_str = datetime.now(LOCAL_TZ).date().isoformat()
+    user_ids = journal_service.get_user_ids_with_entries_for_date(today_str)
+
+    for user_id in user_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="Want to finish today's DevLog? /summary /preview /push",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to send daily reminder to user %s: %s",
+                user_id,
+                exc.__class__.__name__,
+            )
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -105,6 +145,56 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(
         f"Today's logs — {today_str}\n\n{devlog.format_entries(entries)}"
+    )
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    today_str = datetime.now(LOCAL_TZ).date().isoformat()
+
+    log_count = journal_service.count_entries_for_date(user_id, today_str)
+    has_summary = summary_service.summary_exists(user_id, today_str)
+    push = github_service.get_push_for_date(user_id, today_str)
+    streak = journal_service.calculate_streak(user_id)
+
+    await update.message.reply_text(
+        f"Logs: {log_count}\n"
+        f"Summary: {'Generated' if has_summary else 'Not generated'}\n"
+        f"GitHub: {'Pushed' if push else 'Not pushed'}\n"
+        f"Last push: {push['pushed_at'] if push else '—'}\n"
+        f"Streak: {streak} {'day' if streak == 1 else 'days'}"
+    )
+
+
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if not context.args:
+        await update.message.reply_text("Usage: /history 2026-05-24")
+        return
+
+    date_arg = context.args[0]
+    try:
+        parsed_date = datetime.strptime(date_arg, "%Y-%m-%d").date()
+    except ValueError:
+        await update.message.reply_text(
+            "Invalid date. Use YYYY-MM-DD, for example: /history 2026-05-24"
+        )
+        return
+
+    if parsed_date.isoformat() != date_arg:
+        await update.message.reply_text(
+            "Invalid date. Use YYYY-MM-DD, for example: /history 2026-05-24"
+        )
+        return
+
+    entries = journal_service.get_entries_for_date(user_id, date_arg)
+    if not entries:
+        await update.message.reply_text(f"No logs found for {date_arg}.")
+        return
+
+    await update.message.reply_text(
+        f"Logs — {date_arg}\n\n{devlog.format_entries(entries)}"
     )
 
 
@@ -220,6 +310,15 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Nothing to cancel.")
 
 
+async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        backup_path = backup_service.create_backup()
+        await update.message.reply_text(f"Backup created ✅ {backup_path.name}")
+    except Exception:
+        logger.exception("Failed to create database backup")
+        await update.message.reply_text("Failed to create backup. Check bot logs for details.")
+
+
 async def cmd_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
@@ -293,11 +392,14 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("yesterday", cmd_yesterday))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("summary", cmd_summary))
     app.add_handler(CommandHandler("regenerate", cmd_regenerate))
     app.add_handler(CommandHandler("edit_summary", cmd_edit_summary))
     app.add_handler(CommandHandler("preview", cmd_preview))
     app.add_handler(CommandHandler("push", cmd_push))
+    app.add_handler(CommandHandler("backup", cmd_backup))
     app.add_handler(CommandHandler("delete_last", cmd_delete_last))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

@@ -24,11 +24,19 @@ def save_summary(user_id: int, summary_text: str) -> None:
 
 
 def get_today_summary(user_id: int) -> str | None:
+    return get_summary_for_date(user_id, _today())
+
+
+def get_summary_for_date(user_id: int, target_date: str) -> str | None:
     with get_connection() as conn:
         cursor = conn.execute(
             "SELECT summary_text FROM daily_summaries "
             "WHERE telegram_user_id = ? AND summary_date = ?",
-            (user_id, _today()),
+            (user_id, target_date),
         )
         row = cursor.fetchone()
         return row["summary_text"] if row else None
+
+
+def summary_exists(user_id: int, target_date: str) -> bool:
+    return get_summary_for_date(user_id, target_date) is not None

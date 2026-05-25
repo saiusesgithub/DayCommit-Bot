@@ -6,6 +6,7 @@
 *.sqlite
 *.sqlite3
 data/
+daycommit-backups/
 
 # python
 __pycache__/
