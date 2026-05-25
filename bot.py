@@ -24,12 +24,17 @@ HELP_TEXT = """
 
 /today — View today's logs
 /summary — Generate AI summary
+/regenerate — Regenerate AI summary
+/edit_summary — Edit saved summary
 /preview — Preview final markdown
 /push — Push to GitHub
 /delete_last — Delete latest log
 /yesterday — View yesterday's logs
+/cancel — Cancel current action
 /help — Show this menu
 """.strip()
+
+AWAITING_EDITED_SUMMARY: set[int] = set()
 
 BOT_COMMANDS = [
     BotCommand("start", "Start DayCommit"),
@@ -37,9 +42,12 @@ BOT_COMMANDS = [
     BotCommand("today", "Show today's logs"),
     BotCommand("yesterday", "Show yesterday's logs"),
     BotCommand("summary", "Generate AI summary"),
+    BotCommand("regenerate", "Regenerate AI summary"),
+    BotCommand("edit_summary", "Edit saved summary"),
     BotCommand("preview", "Preview final Daily DevLog"),
     BotCommand("push", "Push today's DevLog to GitHub"),
     BotCommand("delete_last", "Delete latest log entry"),
+    BotCommand("cancel", "Cancel current action"),
 ]
 
 
@@ -67,6 +75,17 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     text = update.message.text
+
+    if user_id in AWAITING_EDITED_SUMMARY:
+        try:
+            summary_service.save_summary(user_id, text)
+            AWAITING_EDITED_SUMMARY.discard(user_id)
+            await update.message.reply_text("Summary updated ✅")
+        except Exception:
+            logger.exception("Failed to update summary for user %s", user_id)
+            await update.message.reply_text("Failed to update summary. Please try again.")
+        return
+
     try:
         journal_service.add_entry(user_id, text)
         await update.message.reply_text("Logged.")
@@ -116,6 +135,16 @@ async def cmd_delete_last(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Failed to delete the last entry. Please try again.")
 
 
+async def _generate_today_summary(user_id: int) -> str:
+    entries = journal_service.get_today_entries(user_id)
+    entries_text = "\n".join(
+        f"{i}. {entry['message_text']}" for i, entry in enumerate(entries, 1)
+    )
+    summary = await ai_service.generate_summary(entries_text)
+    summary_service.save_summary(user_id, summary)
+    return summary
+
+
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     entries = journal_service.get_today_entries(user_id)
@@ -125,15 +154,16 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"No logs for today ({today_str}) to summarize.")
         return
 
+    if summary_service.get_today_summary(user_id):
+        await update.message.reply_text(
+            "Today's summary already exists. Use /regenerate to overwrite it or /edit_summary to edit it."
+        )
+        return
+
     await update.message.reply_text("Generating summary...")
 
-    entries_text = "\n".join(
-        f"{i}. {entry['message_text']}" for i, entry in enumerate(entries, 1)
-    )
-
     try:
-        summary = await ai_service.generate_summary(entries_text)
-        summary_service.save_summary(user_id, summary)
+        summary = await _generate_today_summary(user_id)
         await update.message.reply_text(summary)
     except RuntimeError as e:
         await update.message.reply_text(str(e))
@@ -142,6 +172,52 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             "Failed to generate summary. Check your API keys and try again."
         )
+
+
+async def cmd_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    entries = journal_service.get_today_entries(user_id)
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
+    if not entries:
+        await update.message.reply_text(f"No logs for today ({today_str}) to summarize.")
+        return
+
+    await update.message.reply_text("Regenerating summary...")
+
+    try:
+        summary = await _generate_today_summary(user_id)
+        await update.message.reply_text(summary)
+    except RuntimeError as e:
+        await update.message.reply_text(str(e))
+    except Exception:
+        logger.exception("Failed to regenerate summary for user %s", user_id)
+        await update.message.reply_text(
+            "Failed to regenerate summary. Check your API keys and try again."
+        )
+
+
+async def cmd_edit_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    summary = summary_service.get_today_summary(user_id)
+
+    if not summary:
+        await update.message.reply_text("No AI summary found. Run /summary first.")
+        return
+
+    AWAITING_EDITED_SUMMARY.add(user_id)
+    await update.message.reply_text(
+        f"Current summary:\n\n{summary}\n\nSend the edited summary as your next message, or use /cancel."
+    )
+
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if user_id in AWAITING_EDITED_SUMMARY:
+        AWAITING_EDITED_SUMMARY.discard(user_id)
+        await update.message.reply_text("Cancelled.")
+    else:
+        await update.message.reply_text("Nothing to cancel.")
 
 
 async def cmd_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -218,9 +294,12 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("yesterday", cmd_yesterday))
     app.add_handler(CommandHandler("summary", cmd_summary))
+    app.add_handler(CommandHandler("regenerate", cmd_regenerate))
+    app.add_handler(CommandHandler("edit_summary", cmd_edit_summary))
     app.add_handler(CommandHandler("preview", cmd_preview))
     app.add_handler(CommandHandler("push", cmd_push))
     app.add_handler(CommandHandler("delete_last", cmd_delete_last))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     return app

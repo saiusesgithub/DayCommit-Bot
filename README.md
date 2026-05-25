@@ -55,6 +55,9 @@ The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. 
 - `/today` - Show today's logs
 - `/yesterday` - Show yesterday's logs
 - `/summary` - Generate and save today's AI summary
+- `/regenerate` - Regenerate and overwrite today's AI summary
+- `/edit_summary` - Send today's saved summary back for manual editing
 - `/preview` - Preview the final Daily DevLog markdown
 - `/push` - Push today's DevLog to GitHub
 - `/delete_last` - Delete the most recent log entry
+- `/cancel` - Cancel summary editing mode
