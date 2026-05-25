@@ -57,6 +57,8 @@ DayCommit-Bot/
 ├── config.py          — loads .env; exposes all config constants
 ├── timezone_utils.py  — LOCAL_TZ (ZoneInfo) + utc_to_local() helper
 ├── requirements.txt   — pinned dependencies
+├── Procfile           — Railway worker process: python main.py
+├── README.md          — local run and Railway deployment notes
 ├── .env               — secrets (gitignored); copy from .env.example
 ├── .env.example       — template for .env
 ├── daycommit.db       — SQLite database file (auto-created on first run)
@@ -265,6 +267,17 @@ If the full preview exceeds 4000 characters, it is split into two messages (AI s
 
 \* At least one of `GEMINI_API_KEY` or `GROQ_API_KEY` must be set to use `/summary`.
 \** Required only for `/push`.
+
+---
+
+## Railway Deployment
+
+- Deployment uses polling mode, not webhooks.
+- `main.py` is the entrypoint and must run with `python main.py`.
+- `Procfile` defines the Railway worker process: `worker: python main.py`.
+- Use a Railway volume mounted at `/data`.
+- Recommended Railway database path: `DB_PATH=/data/daycommit.db`.
+- Keep `.env` and SQLite database files out of git; `.gitignore` excludes `.env`, `*.db`, `*.sqlite`, `*.sqlite3`, and `data/`.
 
 ---
 
