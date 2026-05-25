@@ -12,12 +12,15 @@ with warnings.catch_warnings():
 from groq import AsyncGroq
 
 from config import (
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
+    CEREBRAS_MODEL,
     GEMINI_API_KEY,
     GEMINI_MODEL,
     GROQ_API_KEY,
     GROQ_MODEL,
     OPENROUTER_API_KEY,
-    OPENROUTER_MODEL,
+    OPENROUTER_MODELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,25 +67,62 @@ Respond with exactly this Markdown (no extra text before or after):
 """
 
 
+class ProviderUnavailable(RuntimeError):
+    pass
+
+
 def _safe_error(exc: Exception) -> str:
     """Return a short error string that avoids keys, URLs, and request payloads."""
     status_code = getattr(exc, "status_code", None)
+    message = ""
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code
+        message = _response_error_message(exc.response)
 
     if status_code:
-        return f"{exc.__class__.__name__} status={status_code}"
+        suffix = f" message={message}" if message else ""
+        return f"status={status_code}{suffix}"
 
-    if isinstance(exc, RuntimeError):
-        return str(exc)
+    if isinstance(exc, RuntimeError) and str(exc):
+        return _short_message(str(exc))
 
     return exc.__class__.__name__
 
 
+def _short_message(message: str, limit: int = 120) -> str:
+    safe = " ".join(message.replace("\n", " ").split())
+    return safe[:limit]
+
+
+def _response_error_message(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        return _short_message(response.reason_phrase)
+
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("code")
+            if message:
+                return _short_message(str(message))
+        if isinstance(error, str):
+            return _short_message(error)
+        message = data.get("message")
+        if message:
+            return _short_message(str(message))
+
+    return _short_message(response.reason_phrase)
+
+
 def _require(value: str, name: str) -> str:
     if not value:
-        raise RuntimeError(f"{name} not set")
+        raise ProviderUnavailable(f"{name} not set")
     return value
+
+
+def _model_list(raw_models: str) -> list[str]:
+    return [model.strip() for model in raw_models.split(",") if model.strip()]
 
 
 def _load_prompt_template() -> str:
@@ -106,7 +146,42 @@ def _build_prompt(entries_text: str) -> str:
 
 async def _openrouter_summary(prompt: str) -> str:
     api_key = _require(OPENROUTER_API_KEY, "OPENROUTER_API_KEY")
-    model = _require(OPENROUTER_MODEL, "OPENROUTER_MODEL")
+    models = _model_list(_require(OPENROUTER_MODELS, "OPENROUTER_MODELS"))
+    if not models:
+        raise ProviderUnavailable("OPENROUTER_MODELS not set")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    last_error: Exception | None = None
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(_OPENROUTER_CHAT_URL, headers=headers, json=payload)
+                response.raise_for_status()
+
+            return _content_from_chat_response(response.json(), "OpenRouter")
+        except Exception as exc:
+            last_error = exc
+            logger.warning("OpenRouter model failed: %s", _safe_error(exc))
+
+    raise RuntimeError(
+        f"OpenRouter failed after {len(models)} configured model(s): "
+        f"{_safe_error(last_error) if last_error else 'no models attempted'}"
+    )
+
+
+async def _cerebras_summary(prompt: str) -> str:
+    api_key = _require(CEREBRAS_API_KEY, "CEREBRAS_API_KEY")
+    model = _require(CEREBRAS_MODEL, "CEREBRAS_MODEL")
+    base_url = _require(CEREBRAS_BASE_URL, "CEREBRAS_BASE_URL").rstrip("/")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -118,13 +193,16 @@ async def _openrouter_summary(prompt: str) -> str:
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(_OPENROUTER_CHAT_URL, headers=headers, json=payload)
+        response = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
         response.raise_for_status()
 
-    data = response.json()
+    return _content_from_chat_response(response.json(), "Cerebras")
+
+
+def _content_from_chat_response(data: dict, provider_name: str) -> str:
     content = data["choices"][0]["message"]["content"].strip()
     if not content:
-        raise RuntimeError("OpenRouter returned empty content")
+        raise RuntimeError(f"{provider_name} returned empty content")
     return content
 
 
@@ -175,6 +253,7 @@ async def generate_summary(entries_text: str) -> str:
 async def generate_from_prompt(prompt: str) -> str:
     providers: tuple[tuple[str, ProviderFn], ...] = (
         ("OpenRouter", _openrouter_summary),
+        ("Cerebras", _cerebras_summary),
         ("Groq", _groq_summary),
         ("Gemini", _gemini_summary),
     )
@@ -182,6 +261,8 @@ async def generate_from_prompt(prompt: str) -> str:
     for provider_name, provider_fn in providers:
         try:
             return await provider_fn(prompt)
+        except ProviderUnavailable:
+            continue
         except Exception as exc:
             logger.warning("%s provider failed: %s", provider_name, _safe_error(exc))
 

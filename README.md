@@ -30,6 +30,10 @@ worker: python main.py
 TELEGRAM_BOT_TOKEN=...
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=openai/gpt-4o-mini
+OPENROUTER_MODELS=openai/gpt-4o-mini
+CEREBRAS_API_KEY=...
+CEREBRAS_BASE_URL=https://api.cerebras.ai/v1
+CEREBRAS_MODEL=llama3.1-8b
 GEMINI_API_KEY=...
 GROQ_API_KEY=...
 GROQ_MODEL=llama-3.3-70b-versatile
@@ -47,7 +51,7 @@ TIMEZONE=Asia/Kolkata
 
 Do not commit `.env`, `.db`, `.sqlite`, or `.sqlite3` files. They are ignored by `.gitignore`.
 
-AI summaries use provider fallback in this order: OpenRouter, then Groq, then Gemini. Set at least one provider API key for `/summary`.
+AI summaries use provider fallback in this order: OpenRouter models, then Cerebras, then Groq, then Gemini. `OPENROUTER_MODELS` accepts comma-separated model IDs and is tried left to right.
 
 The `/summary` prompt style is editable in `prompts/daily_summary_template.md`. Keep the `{{DIARY_TEXT}}` placeholder in that file; DayCommit replaces it with the combined journal entries at runtime. If the template file is missing, the bot falls back to a built-in safe summary prompt.
 

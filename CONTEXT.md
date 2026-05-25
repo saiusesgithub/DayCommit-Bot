@@ -19,7 +19,7 @@ structured Markdown summary. `/preview` assembles the full Daily DevLog document
 
 - Journal logging, viewing, and deleting: done
 - Timezone-aware dates and display: done
-- AI summary (`/summary`) with OpenRouter primary, then Groq and Gemini fallbacks: done
+- AI summary (`/summary`) with OpenRouter model list primary, then Cerebras, Groq, and Gemini fallbacks: done
 - Full DevLog preview (`/preview`): done
 - GitHub push (`/push`) via GitHub REST API: done
 - Export and search: not yet implemented
@@ -36,6 +36,7 @@ structured Markdown summary. `/preview` assembles the full Daily DevLog document
 | Config        | python-dotenv                         | 1.0.1    |
 | Timezones     | `zoneinfo` (stdlib) + `tzdata`        | 2025.2   |
 | AI (primary)  | OpenRouter OpenAI-compatible chat API via `httpx` | 0.28.1 |
+| AI (fallback) | Cerebras OpenAI-compatible chat API via `httpx` | 0.28.1 |
 | AI (fallback) | Groq (llama-3.3-70b-versatile) via `groq` | 1.2.0 |
 | AI (fallback) | Google Gemini via `google-generativeai` | 0.8.6 |
 | GitHub API    | `httpx` async HTTP client             | 0.28.1   |
@@ -54,7 +55,7 @@ DayCommit-Bot/
 ├── devlog.py          — shared Daily DevLog formatting + markdown builder
 ├── github_service.py  — GitHub REST API push/update logic + push audit storage
 ├── backup_service.py  — manual SQLite backup creation
-├── ai_service.py      — OpenRouter, Groq, Gemini provider fallback logic
+├── ai_service.py      — OpenRouter, Cerebras, Groq, Gemini provider fallback logic
 ├── prompts/
 │   └── daily_summary_template.md — editable /summary prompt template
 ├── database.py        — SQLite init, table schemas, connection context manager
@@ -155,7 +156,9 @@ Without `tzdata`, `ZoneInfo("Asia/Kolkata")` raises `ZoneInfoNotFoundError` on W
        ▼
 ai_service.generate_summary(entries_text)
        │
-       ├── try: _openrouter_summary() ← OPENROUTER_MODEL, default openai/gpt-4o-mini
+       ├── try: _openrouter_summary() ← OPENROUTER_MODELS, comma-separated, tried left to right
+       │         if any exception ↓
+       ├── try: _cerebras_summary()   ← CEREBRAS_MODEL, default llama3.1-8b
        │         if any exception ↓
        ├── try: _groq_summary()       ← GROQ_MODEL, default llama-3.3-70b-versatile
        │         if any exception ↓
@@ -170,6 +173,8 @@ bot sends summary text to user
 
 - Both AI clients are lazy-initialized (only created on first `/summary` call).
 - Model names are configurable via `.env` so provider deprecations do not require code edits.
+- `OPENROUTER_MODELS` supports comma-separated model IDs. OpenRouter tries each configured model before falling back to Cerebras.
+- Missing Groq or Gemini keys are skipped without warnings; provider runtime failures are logged with sanitized status/message only.
 - Summary style is configurable by editing `prompts/daily_summary_template.md`.
 - The template must contain `{{DIARY_TEXT}}`; `ai_service.py` replaces it with combined journal entries at runtime.
 - If the template file is missing or does not contain the placeholder, `ai_service.py` falls back to a built-in safe prompt.
@@ -310,6 +315,10 @@ Long `/summary`, `/regenerate`, and `/edit_summary` summary text is sent as `sum
 | `TELEGRAM_BOT_TOKEN` | Yes      | —               | From @BotFather                                |
 | `OPENROUTER_API_KEY` | Yes*     | —               | OpenRouter primary AI provider                 |
 | `OPENROUTER_MODEL`   | No       | `openai/gpt-4o-mini` | OpenRouter model used by `/summary`       |
+| `OPENROUTER_MODELS`  | No       | `OPENROUTER_MODEL` | Comma-separated OpenRouter models tried in order |
+| `CEREBRAS_API_KEY`   | Yes*     | —               | Cerebras fallback AI provider                  |
+| `CEREBRAS_BASE_URL`  | No       | `https://api.cerebras.ai/v1` | Cerebras OpenAI-compatible base URL |
+| `CEREBRAS_MODEL`     | No       | `llama3.1-8b`   | Cerebras fallback model used by `/summary`     |
 | `GROQ_API_KEY`       | Yes*     | —               | Groq fallback AI provider                      |
 | `GEMINI_MODEL`       | No       | `gemini-3.5-flash` | Gemini model used by `/summary`             |
 | `GROQ_MODEL`         | No       | `llama-3.3-70b-versatile` | Groq fallback model used by `/summary` |
@@ -322,7 +331,7 @@ Long `/summary`, `/regenerate`, and `/edit_summary` summary text is sent as `sum
 | `BACKUP_DIR`         | No       | `daycommit-backups` | Directory for manual SQLite backups       |
 | `TIMEZONE`           | No       | `Asia/Kolkata`  | IANA timezone name for display and dates       |
 
-\* At least one of `OPENROUTER_API_KEY`, `GROQ_API_KEY`, or `GEMINI_API_KEY` must be set to use `/summary`.
+\* At least one of `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `GROQ_API_KEY`, or `GEMINI_API_KEY` must be set to use `/summary`.
 \** Required only for `/push`.
 
 ---
@@ -381,6 +390,7 @@ python main.py
 | 2026-05-25 | `google-generativeai` deprecated; `google-genai` failed to install on Windows | Using `google-generativeai` 0.8.6 with FutureWarning suppressed; Groq added as fallback |
 | 2026-05-25 | `/summary` failed because `gemini-1.5-flash` was unavailable and old Groq SDK crashed with `httpx 0.28` | Added configurable model names, defaulted to current Gemini/Groq models, and upgraded `groq` to 1.2.0 |
 | 2026-05-25 | AI fallback was hardcoded around Gemini first, then Groq | Refactored `ai_service.py` into OpenRouter → Groq → Gemini provider fallback with sanitized provider logs |
+| 2026-05-25 | OpenRouter free models could rate-limit and Groq/Gemini were unreliable from cloud hosts | Added comma-separated OpenRouter model fallback and Cerebras fallback before Groq/Gemini |
 | 2026-05-25 | `/summary` prompt was hardcoded in `ai_service.py` | Moved editable prompt style to `prompts/daily_summary_template.md` with `{{DIARY_TEXT}}` runtime replacement |
 | 2026-05-25 | Telegram slash-command menu was not populated | Added startup `set_my_commands()` registration and cleaner `/help` text |
 | 2026-05-25 | Saved AI summaries could not be manually edited or regenerated explicitly | Added `/edit_summary`, `/regenerate`, and `/cancel` with in-memory edit state |
